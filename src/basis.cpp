@@ -534,7 +534,64 @@ real compute_H_int_element(const std::vector<Det>& bra_dets, const Eigen::Tensor
                         Det bra_det = bra_dets[bra_det_idx];
                         assert(bra_det != 0);
 
-                        result += new_ket_det_sign*bra_coeffs(bra_det_idx)*ket_coeffs(ket_det_idx)*(bra_det == new_ket_det);
+                        real cur_res = new_ket_det_sign*bra_coeffs(bra_det_idx)*ket_coeffs(ket_det_idx)*(bra_det == new_ket_det);
+
+                        result += cur_res;
+                     }
+                  }
+
+               }
+            }
+         }
+      }
+
+      result *= params.U/params.Ns;
+   }
+
+   return result;
+}
+
+template <class T>
+real compute_H_int_element(const std::vector<Det>& bra_dets, const std::span<T>& bra_coeffs,
+                           const std::vector<Det>& ket_dets, const std::span<T>& ket_coeffs,
+                           const HubbardParams& params)
+{
+   real result = 0;
+
+   Det bra_ref_det = bra_dets[0];
+   Det ket_ref_det = ket_dets[0];
+   auto [bup, bdn] = get_det_up_down(bra_ref_det, params);
+   auto [kup, kdn] = get_det_up_down(ket_ref_det, params);
+   int spinless_diff = bitcount_lookup[(bup | bdn) ^ (kup | kdn)] +
+                       bitcount_lookup[(bup & bdn) ^ (kup & kdn)];
+   
+   if(spinless_diff <= 4)
+   {
+      for(int k1 = 0; k1 < int(params.Ns); k1++)
+      {
+         for(int k2 = 0; k2 < int(params.Ns); k2++)
+         {
+            for(int q = 0; q < int(params.Ns); q++)
+            {
+               for(int ket_det_idx = 0; ket_det_idx < int(ket_dets.size()); ket_det_idx++)
+               {
+                  Det ket_det = ket_dets[ket_det_idx];
+                  auto [new_ket_det, new_ket_det_sign] = sadd(mod(k1 + q, params.Ns),
+                                                              ssub(k1,
+                                                                   sadd(mod(k2 - q, params.Ns) + params.Ns,
+                                                                        ssub(k2 + params.Ns, 
+                                                                             ket_det))));
+
+                  if(new_ket_det_sign != 0 && cmp_det_config(bra_dets[0], new_ket_det, params))
+                  {
+                     for(int bra_det_idx = 0; bra_det_idx < bra_dets.size(); bra_det_idx++)
+                     {
+                        Det bra_det = bra_dets[bra_det_idx];
+                        assert(bra_det != 0);
+
+                        real cur_res = new_ket_det_sign*bra_coeffs[bra_det_idx]*ket_coeffs[ket_det_idx]*(bra_det == new_ket_det);
+
+                        result += cur_res;
                      }
                   }
 
@@ -554,19 +611,20 @@ KConfigs get_k_orbitals(const HubbardParams& params)
    auto [basis, K, block_sizes] = form_K_basis(params);
 
    int i0 = 0;
-   std::vector<std::vector<std::vector<Det>>> orbitals;
+   std::vector<std::vector<std::shared_ptr<std::vector<Det>>>> orbitals;
 
    for(int block_size : block_sizes)
    {
       int i1 = i0 + block_size;
 
-      std::vector<std::vector<Det>> K_orbitals;
+      std::vector<std::shared_ptr<std::vector<Det>>> K_orbitals;
       while(i1 > i0)
       {
          Det ref_det = basis[i1 - 1];
          i1--;
 
-         std::vector<Det> ref_K_orbitals = {ref_det};
+         auto ref_K_orbitals = std::make_shared<std::vector<Det>>();
+         ref_K_orbitals->push_back(ref_det);
 
          int didx = i1 - 1;
          while(didx >= i0)
@@ -575,7 +633,7 @@ KConfigs get_k_orbitals(const HubbardParams& params)
 
             if(cmp_det_config(ref_det, det, params))
             {
-               ref_K_orbitals.push_back(det);
+               ref_K_orbitals->push_back(det);
                pop_vec(basis, didx, i1);
             }
 
@@ -593,9 +651,9 @@ KConfigs get_k_orbitals(const HubbardParams& params)
 }
 
 void form_KS_subbasis(real f, real m,
-                      const std::vector<std::vector<Det>>& K_configs,
+                      const std::vector<std::shared_ptr<std::vector<Det>>>& K_configs,
                       const std::vector<int>& single_counts,
-                      std::vector<std::vector<Det>*>& Kf_basis,
+                      std::vector<std::shared_ptr<std::vector<Det>>>& Kf_basis,
                       std::vector<int>& Kf_single_counts,
                       std::vector<int>& Kf_counts,
                       std::vector<real>& Kf_spins,
@@ -607,7 +665,7 @@ void form_KS_subbasis(real f, real m,
 
    for(int config_idx = 0; config_idx < K_configs.size(); config_idx++)
    {
-      const std::vector<Det>& config = K_configs[config_idx];
+      const auto config = K_configs[config_idx];
       int config_single_count = single_counts[config_idx];
 
       if(config_single_count > 0 && f <= 0.5*config_single_count)
@@ -615,7 +673,7 @@ void form_KS_subbasis(real f, real m,
          int fstate_count = CSV_dim(f, config_single_count);
          if(fstate_count > 0)
          {
-            Kf_basis.push_back(const_cast<std::vector<Det>*>(&config));
+            Kf_basis.push_back(config);
             Kf_single_counts.push_back(config_single_count);
             Kf_counts.push_back(fstate_count);
             Kf_spins.push_back(f);
@@ -630,7 +688,7 @@ void form_KS_subbasis(real f, real m,
       {
          // Handle singlets/closed-shell configs
          assert(m == 0);
-         Kf_basis.push_back(const_cast<std::vector<Det>*>(&config));
+         Kf_basis.push_back(config);
          Kf_single_counts.push_back(0);
          Kf_counts.push_back(1);
          Kf_spins.push_back(f);
@@ -641,7 +699,7 @@ void form_KS_subbasis(real f, real m,
          }
       }
 
-      int cur_config_count = int(config.size());
+      int cur_config_count = int(config->size());
       if(cur_config_count > max_config_count)
       {
          max_config_count = cur_config_count;
@@ -651,9 +709,9 @@ void form_KS_subbasis(real f, real m,
 }
 
 void form_KS_subbasis(real f, real m,
-                      const std::vector<std::vector<Det>>& K_configs,
+                      const std::vector<std::shared_ptr<std::vector<Det>>>& K_configs,
                       const std::vector<int>& single_counts,
-                      std::vector<std::vector<Det>*>& Kf_basis,
+                      std::vector<std::shared_ptr<std::vector<Det>>>& Kf_basis,
                       std::vector<int>& Kf_single_counts,
                       std::vector<int>& Kf_counts,
                       int& max_config_count,
@@ -664,7 +722,7 @@ void form_KS_subbasis(real f, real m,
 
    for(int config_idx = 0; config_idx < K_configs.size(); config_idx++)
    {
-      const std::vector<Det>& config = K_configs[config_idx];
+      const auto config = K_configs[config_idx];
       int config_single_count = single_counts[config_idx];
 
       if(config_single_count > 0 && f <= 0.5*config_single_count)
@@ -672,7 +730,7 @@ void form_KS_subbasis(real f, real m,
          int fstate_count = CSV_dim(f, config_single_count);
          if(fstate_count > 0)
          {
-            Kf_basis.push_back(const_cast<std::vector<Det>*>(&config));
+            Kf_basis.push_back(config);
             Kf_single_counts.push_back(config_single_count);
             Kf_counts.push_back(fstate_count);
 
@@ -686,7 +744,7 @@ void form_KS_subbasis(real f, real m,
       {
          // Handle singlets/closed-shell configs
          assert(m == 0);
-         Kf_basis.push_back(const_cast<std::vector<Det>*>(&config));
+         Kf_basis.push_back(config);
          Kf_single_counts.push_back(0);
          Kf_counts.push_back(1);
 
@@ -696,7 +754,7 @@ void form_KS_subbasis(real f, real m,
          }
       }
 
-      int cur_config_count = int(config.size());
+      int cur_config_count = int(config->size());
       if(cur_config_count > max_config_count)
       {
          max_config_count = cur_config_count;
@@ -706,7 +764,7 @@ void form_KS_subbasis(real f, real m,
 }
 
 void form_SCFs(real f, real m,
-               std::span<std::vector<Det>*> Kf_basis,
+               std::span<std::shared_ptr<std::vector<Det>>> Kf_basis,
                std::span<int> single_counts,
                std::span<int> S_path_counts,
                std::vector<Det>& S_paths,
@@ -725,7 +783,7 @@ void form_SCFs(real f, real m,
          for(int s_path_idx = 0; s_path_idx < S_paths.size(); s_path_idx++)
          {
             Det S_path = S_paths[s_path_idx];
-            const std::vector<Det>* const cur_dets = Kf_basis[k_idx];
+            const auto cur_dets = Kf_basis[k_idx];
 
             for(int det_idx = 0; det_idx < cur_dets->size(); det_idx++)
             {
@@ -745,7 +803,7 @@ void form_SCFs(real f, real m,
 }
 
 void form_SCFs(real f, real m,
-               std::span<std::vector<Det>*> Kf_basis,
+               std::span<std::shared_ptr<std::vector<Det>>> Kf_basis,
                std::span<int> single_counts,
                std::span<int> S_path_counts,
                std::vector<Det>& S_paths,
@@ -764,7 +822,7 @@ void form_SCFs(real f, real m,
          for(int s_path_idx = 0; s_path_idx < S_paths.size(); s_path_idx++)
          {
             Det S_path = S_paths[s_path_idx];
-            const std::vector<Det>* const cur_dets = Kf_basis[k_idx];
+            const auto cur_dets = Kf_basis[k_idx];
 
             for(int det_idx = 0; det_idx < cur_dets->size(); det_idx++)
             {

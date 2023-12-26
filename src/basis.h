@@ -25,16 +25,14 @@ struct HubbardParams
    HubbardParams() = default;
 
    explicit HubbardParams(real T, real U, int Ns, int N_up, int N_down) :
-      //T(T), U(U), Ns(Ns), N_up(N_up), N_down(N_down), N(N_up + N_down)
       T(T), U(U), Ns(Ns), N(N_up + N_down), N_up(N_up), N_down(N_down)
    {
-      assert(Ns > 0 && N > 0 && N_up >= 0 && N_down >= 0);
+      assert(Ns > 0 && N > 0 && N_up >= 0 && N_down >= 0 &&
+             N_up <= Ns && N_down <= Ns);
    }
 
    constexpr explicit HubbardParams(real T, real U, int Ns, int N_up, int N_down, int) :
-      //T(T), U(U), Ns(Ns), N_up(N_up), N_down(N_down), N(N_up + N_down) 
-      T(T), U(U), Ns(Ns), N(N_up + N_down), N_up(N_up), N_down(N_down)
-   {}
+      T(T), U(U), Ns(Ns), N(N_up + N_down), N_up(N_up), N_down(N_down) {}
 
    // NOTE: Result may overflow for systems larger than 16 sites (but such systems are currently not supported)
    int basis_size() const
@@ -97,7 +95,7 @@ struct KBasis
 
 struct KConfigs
 {
-   std::vector<std::vector<std::vector<Det>>> configs;
+   std::vector<std::vector<std::shared_ptr<std::vector<Det>>>> configs;
    std::vector<int> block_sizes;
 };
 
