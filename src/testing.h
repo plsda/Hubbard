@@ -49,7 +49,6 @@ void __test_SCF_orthonormality(const std::vector<std::shared_ptr<std::vector<Det
 void __test_SCF_spins(const std::vector<std::shared_ptr<std::vector<Det>>>& Kf_basis, const std::vector<int>& Kf_counts,
                       const std::vector<real>& Kf_spins, std::vector<real>& SCFs, const HubbardParams& params);
 
-
 #define KS_BASIS_TEST___(suite_name, T, U, Ns, N_up, N_dn)\
    using suite_name = KSBasisTest<StructuralHubbardParams{(real)T, (real)U, Ns, N_up, N_dn}>;\
    TEST_P(suite_name, test_basis_K_and_configs) { ASSERT_NO_FATAL_FAILURE(__test_basis_K_and_configs(Kf_basis, Kf_counts, Kf_spins, SCFs, params)); }\

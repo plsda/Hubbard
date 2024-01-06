@@ -1,4 +1,31 @@
 
+// NOTE: Result may overflow for systems larger than 16 sites (but such systems are currently not supported)
+int HubbardParams::basis_size() const
+{
+   return choose(Ns, N_up)*choose(Ns, N_down);
+}
+
+void HubbardParams::set_half_filling(int new_N_up)
+{
+   assert(new_N_up > 0);
+
+   Ns = 2*new_N_up;
+   N = 2*new_N_up;
+   N_up = new_N_up;
+   N_down = new_N_up;
+}
+
+std::ostream& operator<<(std::ostream& os, const HubbardParams& params)
+{
+   os << "{T=" << params.T
+      << ", U=" << params.U
+      << ", Ns=" << params.Ns
+      << ", N_up=" << params.N_up
+      << ", N_dn=" << params.N_down << "}";
+
+   return os;
+}
+
 // Particle number operator
 u32 count_state(Det det, u32 state_idx) // state_idx = 0, 1, ...
 {
@@ -37,7 +64,7 @@ u32 get_down_pop(Det det, u32 Ns)
 
 // Fermionic creation operator
 // NOTE: Null ket is denoted by setting sign = 0 and vacuum by det = 0
-SDet sadd(u32 state_idx, Det det, int sign = 1)
+SDet sadd(u32 state_idx, Det det, int sign)// = 1)
 {
    int neg_state_occ = 1 - count_state(det, state_idx);
    Det result = (det | (1 << state_idx))*neg_state_occ;
@@ -54,7 +81,7 @@ SDet sadd(u32 state_idx, SDet det)
 }
 
 // Fermionic annihilation operator
-SDet ssub(u32 state_idx, Det det, int sign = 1)
+SDet ssub(u32 state_idx, Det det, int sign)// = 1)
 {
    int state_occ = count_state(det, state_idx);
    Det result = (det & (~(1 << state_idx)))*state_occ;
@@ -231,65 +258,6 @@ void det2spinless_statelist(Det det, const HubbardParams& params, std::vector<in
       }
    }
 }
-
-real SCF_spin(const std::vector<Det>& dets, std::span<real> coeffs, const HubbardParams& params)
-{
-   int Ns = params.Ns;
-   real m = 0.5*(params.N_up - params.N_down);
-   real m2 = m*m;
-   real result = 0;
-
-   for(int bra_idx = 0; bra_idx < dets.size(); bra_idx++)
-   {
-      Det bra = dets[bra_idx];
-      real bra_coeff = coeffs[bra_idx];
-
-      for(int ket_idx = 0; ket_idx < dets.size(); ket_idx++)
-      {
-         Det ket = dets[ket_idx];
-         real ket_coeff = coeffs[ket_idx];
-
-         for(int k1 = 0; k1 < Ns; k1++)
-         {
-            for(int k2 = 0; k2 < Ns; k2++)
-            {
-               auto [new_ket, sign] = sadd(k1 + Ns,
-                                           ssub(k1,
-                                                sadd(k2,
-                                                     ssub(k2 + Ns, ket))));
-
-               result += sign*bra_coeff*ket_coeff*(bra == new_ket);
-            }
-         }
-
-         result += bra_coeff*ket_coeff*(m + m2)*(bra == ket);
-      }
-   }
-
-   result = 0.5*(std::sqrt(4.0*result + 1.0) - 1.0);
-   assert((result >= 0.0) || is_close(result, 0.0, real(1e-6)));
-
-   return result;
-}
-
-real SCF_inner(const std::vector<Det>& bra_dets, std::span<real> bra_coeffs, 
-               const std::vector<Det>& ket_dets, std::span<real> ket_coeffs)
-{
-   real result = 0;
-   for(int bra_det_idx = 0; bra_det_idx < bra_dets.size(); bra_det_idx++)
-   {
-      Det bra_det = bra_dets[bra_det_idx];
-
-      for(int ket_det_idx = 0; ket_det_idx < ket_dets.size(); ket_det_idx++)
-      {
-         Det ket_det = ket_dets[ket_det_idx];
-         result += bra_coeffs[bra_det_idx]*ket_coeffs[ket_det_idx]*(bra_det == ket_det);
-      }
-   }
-
-   return result;
-}
-
 
 // Dimension of the configuration state vector for an orbital configuration with 'singles_count' singles and total spin 'spin'
 int CSV_dim(real spin, int single_count)
@@ -494,116 +462,6 @@ real compute_SCF_overlap(Det S_path, Det M_path, int edge_count, real f, real m)
 
    overlap = sign*std::sqrt(overlap);
    return overlap;
-}
-
-template <class T>
-real compute_H_int_element(const std::vector<Det>& bra_dets, const Eigen::TensorRef<T>& bra_coeffs,
-                           const std::vector<Det>& ket_dets, const Eigen::TensorRef<T>& ket_coeffs,
-                           const HubbardParams& params)
-{
-   real result = 0;
-
-   Det bra_ref_det = bra_dets[0];
-   Det ket_ref_det = ket_dets[0];
-   auto [bup, bdn] = get_det_up_down(bra_ref_det, params);
-   auto [kup, kdn] = get_det_up_down(ket_ref_det, params);
-   int spinless_diff = bitcount_lookup[(bup | bdn) ^ (kup | kdn)] +
-                       bitcount_lookup[(bup & bdn) ^ (kup & kdn)];
-   
-   if(spinless_diff <= 4)
-   {
-      for(int k1 = 0; k1 < int(params.Ns); k1++)
-      {
-         for(int k2 = 0; k2 < int(params.Ns); k2++)
-         {
-            for(int q = 0; q < int(params.Ns); q++)
-            {
-               for(int ket_det_idx = 0; ket_det_idx < int(ket_dets.size()); ket_det_idx++)
-               {
-                  Det ket_det = ket_dets[ket_det_idx];
-                  auto [new_ket_det, new_ket_det_sign] = sadd(mod(k1 + q, params.Ns),
-                                                              ssub(k1,
-                                                                   sadd(mod(k2 - q, params.Ns) + params.Ns,
-                                                                        ssub(k2 + params.Ns, 
-                                                                             ket_det))));
-
-                  if(new_ket_det_sign != 0 && cmp_det_config(bra_dets[0], new_ket_det, params))
-                  {
-                     for(int bra_det_idx = 0; bra_det_idx < bra_dets.size(); bra_det_idx++)
-                     {
-                        Det bra_det = bra_dets[bra_det_idx];
-                        assert(bra_det != 0);
-
-                        real cur_res = new_ket_det_sign*bra_coeffs(bra_det_idx)*ket_coeffs(ket_det_idx)*(bra_det == new_ket_det);
-
-                        result += cur_res;
-                     }
-                  }
-
-               }
-            }
-         }
-      }
-
-      result *= params.U/params.Ns;
-   }
-
-   return result;
-}
-
-template <class T>
-real compute_H_int_element(const std::vector<Det>& bra_dets, const std::span<T>& bra_coeffs,
-                           const std::vector<Det>& ket_dets, const std::span<T>& ket_coeffs,
-                           const HubbardParams& params)
-{
-   real result = 0;
-
-   Det bra_ref_det = bra_dets[0];
-   Det ket_ref_det = ket_dets[0];
-   auto [bup, bdn] = get_det_up_down(bra_ref_det, params);
-   auto [kup, kdn] = get_det_up_down(ket_ref_det, params);
-   int spinless_diff = bitcount_lookup[(bup | bdn) ^ (kup | kdn)] +
-                       bitcount_lookup[(bup & bdn) ^ (kup & kdn)];
-   
-   if(spinless_diff <= 4)
-   {
-      for(int k1 = 0; k1 < int(params.Ns); k1++)
-      {
-         for(int k2 = 0; k2 < int(params.Ns); k2++)
-         {
-            for(int q = 0; q < int(params.Ns); q++)
-            {
-               for(int ket_det_idx = 0; ket_det_idx < int(ket_dets.size()); ket_det_idx++)
-               {
-                  Det ket_det = ket_dets[ket_det_idx];
-                  auto [new_ket_det, new_ket_det_sign] = sadd(mod(k1 + q, params.Ns),
-                                                              ssub(k1,
-                                                                   sadd(mod(k2 - q, params.Ns) + params.Ns,
-                                                                        ssub(k2 + params.Ns, 
-                                                                             ket_det))));
-
-                  if(new_ket_det_sign != 0 && cmp_det_config(bra_dets[0], new_ket_det, params))
-                  {
-                     for(int bra_det_idx = 0; bra_det_idx < bra_dets.size(); bra_det_idx++)
-                     {
-                        Det bra_det = bra_dets[bra_det_idx];
-                        assert(bra_det != 0);
-
-                        real cur_res = new_ket_det_sign*bra_coeffs[bra_det_idx]*ket_coeffs[ket_det_idx]*(bra_det == new_ket_det);
-
-                        result += cur_res;
-                     }
-                  }
-
-               }
-            }
-         }
-      }
-
-      result *= params.U/params.Ns;
-   }
-
-   return result;
 }
 
 KConfigs get_k_orbitals(const HubbardParams& params)
@@ -841,3 +699,62 @@ void form_SCFs(real f, real m,
       }
    }
 }
+
+real SCF_spin(const std::vector<Det>& dets, std::span<real> coeffs, const HubbardParams& params)
+{
+   int Ns = params.Ns;
+   real m = 0.5*(params.N_up - params.N_down);
+   real m2 = m*m;
+   real result = 0;
+
+   for(int bra_idx = 0; bra_idx < dets.size(); bra_idx++)
+   {
+      Det bra = dets[bra_idx];
+      real bra_coeff = coeffs[bra_idx];
+
+      for(int ket_idx = 0; ket_idx < dets.size(); ket_idx++)
+      {
+         Det ket = dets[ket_idx];
+         real ket_coeff = coeffs[ket_idx];
+
+         for(int k1 = 0; k1 < Ns; k1++)
+         {
+            for(int k2 = 0; k2 < Ns; k2++)
+            {
+               auto [new_ket, sign] = sadd(k1 + Ns,
+                                           ssub(k1,
+                                                sadd(k2,
+                                                     ssub(k2 + Ns, ket))));
+
+               result += sign*bra_coeff*ket_coeff*(bra == new_ket);
+            }
+         }
+
+         result += bra_coeff*ket_coeff*(m + m2)*(bra == ket);
+      }
+   }
+
+   result = 0.5*(std::sqrt(4.0*result + 1.0) - 1.0);
+   assert((result >= 0.0) || is_close(result, 0.0, real(1e-6)));
+
+   return result;
+}
+
+real SCF_inner(const std::vector<Det>& bra_dets, std::span<real> bra_coeffs, 
+               const std::vector<Det>& ket_dets, std::span<real> ket_coeffs)
+{
+   real result = 0;
+   for(int bra_det_idx = 0; bra_det_idx < bra_dets.size(); bra_det_idx++)
+   {
+      Det bra_det = bra_dets[bra_det_idx];
+
+      for(int ket_det_idx = 0; ket_det_idx < ket_dets.size(); ket_det_idx++)
+      {
+         Det ket_det = ket_dets[ket_det_idx];
+         result += bra_coeffs[bra_det_idx]*ket_coeffs[ket_det_idx]*(bra_det == ket_det);
+      }
+   }
+
+   return result;
+}
+

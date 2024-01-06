@@ -5,6 +5,13 @@
 
 int main()
 {
+   std::stringstream error_stream;
+   bool compute_status = init_compute(&error_stream);
+   if(!compute_status)
+   {
+      std::cout << error_stream.rdbuf();
+      return -1;
+   }
 
    real T = 1;
    real U = real(2.7);

@@ -1,8 +1,7 @@
 
+// Per-particle energy
 real noninteracting_E(int n, real T, int Ns, BCS bcs) // n = 1, 2, ..., Ns
 {
-   // NOTE: Per-particle
-   
    if(bcs == BCS::OPEN)
    {
       return -2.0*T*std::cos(PI*n/(Ns + 1.0));
@@ -37,7 +36,6 @@ real noninteracting_E0(const HubbardParams& params, BCS bcs)
 
    return result;
 }
-
    
 real dimer_E0(const HubbardParams& params, BCS bcs)
 {
@@ -77,10 +75,9 @@ real dimer_E0(const HubbardParams& params, BCS bcs)
    return result;
 }
     
+// Ground state energy in the atomic limit (T = 0)
 real atomic_E0(const HubbardParams& params)
 {
-   // NOTE: Ground state energy in the atomic limit (T = 0)
-
    real result = 0;
    real U = params.U;
 
@@ -97,7 +94,6 @@ real atomic_E0(const HubbardParams& params)
 
    return result;
 }
-
 
 // NOTE: This is an asymptotic result
 real halffilled_E_per_N(real T, real U, IntArgs int_args)
@@ -123,7 +119,6 @@ real halffilled_E_per_N(real T, real U, IntArgs int_args)
 
    return -4.0*T*integ;
 }
-
 
 real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
 {
@@ -219,10 +214,13 @@ real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
                {
                   Eigen::array<Eigen::Index, 3> offsets = {ket_k_idx, ket_path_idx, 0};
                   Eigen::array<Eigen::Index, 3> extents = {1, 1, max_config_count};
-                  Eigen::TensorRef<Arr3R> ket_coeffs = SCFs.slice(offsets, extents);
+                  Arr3R ket_coeffs = SCFs.slice(offsets, extents);
 
+                  const real* const ket_coeffs_data = ket_coeffs.data();
                   // Diagonal
-                  real cur_elem = compute_H_int_element(ket_dets, ket_coeffs, ket_dets, ket_coeffs, params);
+                  real cur_elem = compute_H_int_element(ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
+                                                        ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
+                                                        params);
                   H_Kf(col_idx, col_idx) += cur_elem;
 
                   // Off-diagonals
@@ -235,9 +233,12 @@ real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
                      {
                         offsets = {bra_k_idx, bra_path_idx, 0};
                         extents = {1, 1, max_config_count};
-                        Eigen::TensorRef<Arr3R> bra_coeffs = SCFs.slice(offsets, extents);
+                        Arr3R bra_coeffs = SCFs.slice(offsets, extents);
 
-                        cur_elem = compute_H_int_element(bra_dets, bra_coeffs, ket_dets, ket_coeffs, params);
+                        const real* const bra_coeffs_data = bra_coeffs.data();
+                        cur_elem = compute_H_int_element(bra_dets.data(), bra_coeffs_data, bra_dets.size(), 
+                                                         ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
+                                                         params);
                         H_Kf(row_idx, col_idx) += cur_elem;
                         H_Kf(col_idx, row_idx) += cur_elem;
 
@@ -252,9 +253,12 @@ real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
                      {
                         offsets = {bra_k_idx, bra_path_idx, 0};
                         extents = {1, 1, max_config_count};
-                        Eigen::TensorRef<Arr3R> bra_coeffs = SCFs.slice(offsets, extents);
+                        Arr3R bra_coeffs = SCFs.slice(offsets, extents);
 
-                        cur_elem = compute_H_int_element(bra_dets, bra_coeffs, ket_dets, ket_coeffs, params);
+                        const real* const bra_coeffs_data = bra_coeffs.data();
+                        cur_elem = compute_H_int_element(bra_dets.data(), bra_coeffs_data, bra_dets.size(), 
+                                                         ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
+                                                         params);
                         H_Kf(row_idx, col_idx) += cur_elem;
                         H_Kf(col_idx, row_idx) += cur_elem;
 

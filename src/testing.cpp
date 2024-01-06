@@ -355,8 +355,6 @@ TEST_P(HIntTest, test_Hint)
 
       for(int ket_path_idx = 0; ket_path_idx < Kf_counts[ket_k_idx]; ket_path_idx++)
       {
-         std::span<real> ket_coeffs = std::span(SCFs.begin() + testket_first_coeff_idx, testket_det_count);
-
          size_t testbra_first_coeff_idx = 0;
          for(int bra_k_idx = 0; bra_k_idx < Kf_basis.size(); bra_k_idx++)
          {
@@ -365,13 +363,14 @@ TEST_P(HIntTest, test_Hint)
 
             for(int bra_path_idx = 0; bra_path_idx < Kf_counts[bra_k_idx]; bra_path_idx++)
             {
-               std::span<real> bra_coeffs = std::span(SCFs.begin() + testbra_first_coeff_idx, testbra_det_count);
+               real H_Kf_rc = compute_H_int_element(bra_dets.data(), SCFs.data() + testbra_first_coeff_idx, testbra_det_count,
+                                                    ket_dets.data(), SCFs.data() + testket_first_coeff_idx, testket_det_count,
+                                                    params);
+               real H_Kf_cr = compute_H_int_element(ket_dets.data(), SCFs.data() + testket_first_coeff_idx, testket_det_count,
+                                                    bra_dets.data(), SCFs.data() + testbra_first_coeff_idx, testbra_det_count,
+                                                    params);
 
-               real H_Kf_rc = compute_H_int_element(bra_dets, bra_coeffs, ket_dets, ket_coeffs, params);
-               real H_Kf_cr = compute_H_int_element(ket_dets, ket_coeffs, bra_dets, bra_coeffs, params);
-
-               ASSERT_NEAR(H_Kf_rc, H_Kf_cr, real(1e-6));
-               //ASSERT_NEAR(H_Kf_rc, H_Kf_cr, real(1e-5));
+               ASSERT_NEAR(H_Kf_rc, H_Kf_cr, real(1e-5));
                ASSERT_LE(std::abs(H_Kf_rc), (params.U/params.Ns)*params.Ns*params.Ns*params.Ns*ket_dets.size()*bra_dets.size());
 
                testbra_first_coeff_idx += testbra_det_count;
