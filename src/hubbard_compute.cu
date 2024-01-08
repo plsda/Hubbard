@@ -1,11 +1,138 @@
 #include <utility>
 #include <helper_cuda.h>
 #include <cuda/atomic>
+#include <cusolver_common.h>
+#include <cusolverDn.h>
 #include "hubbard_compute.h"
 
-#define cuda_memcpy(src, dst, count) cudaMemcpy(dst, src, cudaMemcpyDefault)
-#define cuda_memcpy_to_device(src, dst, sz) cudaMemcpy(dst, src, sz, cudaMemcpyHostToDevice)
-#define cuda_memcpy_to_host(src, dst, sz) cudaMemcpy(dst, src, sz, cudaMemcpyDeviceToHost)
+// library_types.h
+constexpr cudaDataType real2cuda()
+{
+   switch(sizeof(real))
+   {
+      case 2: { return CUDA_R_16F; } break;
+      case 4: { return CUDA_R_32F; } break;
+      case 8: { return CUDA_R_64F; } break;
+      default: { assert(!"Unsupported real type."); return CUDA_R_32F; };
+   }
+}
+const cudaDataType CUDA_REAL = real2cuda();
+const cudaDataType CUDA_COMP_TYPE = CUDA_REAL;
+
+#define cuda_memcpy(dst, src, sz) cudaMemcpy(dst, src, sz, cudaMemcpyDefault)
+#define cuda_memcpy_to_device(dst, src, sz) cudaMemcpy(dst, src, sz, cudaMemcpyHostToDevice)
+#define cuda_memcpy_to_host(dst, src, sz) cudaMemcpy(dst, src, sz, cudaMemcpyDeviceToHost)
+
+#define CHECK_NO_CUDA_ERRORS assert(capture_cuda_error(cudaGetLastError(), __LINE__, __FILE__))
+#define CAPTURE_LAST_CUDA_ERROR(...) capture_cuda_error(cudaGetLastError(), __LINE__, __FILE__, EXPAND(__VA_ARGS__))
+#define CAPTURE_CUDA_ERROR(call, ...) capture_cuda_error(call, __LINE__, __FILE__, EXPAND(__VA_ARGS__))
+bool capture_cuda_error(cudaError_t error, int line, const char* file, Error_stream* const errors = 0)
+{
+   bool no_errors = true;
+   if(error != cudaSuccess)
+   {
+      if(errors)
+      {
+         *errors << file << "(" << line << "): " << cudaGetErrorName(error) 
+                 << ": " << cudaGetErrorString(error) << "\n";
+      }
+
+      no_errors = false;
+   }
+
+   assert(no_errors);
+
+   return no_errors;
+}
+
+class Hubbard_compute_device::Compute_context
+{
+public:
+   Compute_context(size_t device_workspace_init_size, size_t host_workspace_init_size, Error_stream* const errors = 0) : errors(errors)
+   {
+      cusolverStatus_t status = cusolverDnCreate(&cusolver_handle);
+      assert(status == CUSOLVER_STATUS_SUCCESS);
+
+      // TODO: Pinned memory
+      CAPTURE_CUDA_ERROR(cudaMalloc(&d_memory, device_workspace_init_size + sizeof(real) + sizeof(int)), errors);
+
+      // TODO: Alignment?
+      d_real_result = (real*)d_memory;
+      d_info        = (int* )(((u8*)d_memory) + sizeof(real));
+      d_workspace   = (void*)(((u8*)d_memory) + sizeof(real) + sizeof(int));
+
+      h_workspace = std::make_unique<u8[]>(host_workspace_init_size);
+
+      device_workspace_size = device_workspace_init_size;
+      host_workspace_size = host_workspace_init_size;
+   }
+
+   ~Compute_context()
+   {
+      CAPTURE_CUDA_ERROR(cudaFree(d_memory), errors);
+   }
+
+   // NOTE: Workspace contents are not copied over
+   void resize_device_workspace(size_t new_size)
+   {
+      CAPTURE_CUDA_ERROR(cudaFree(d_memory), errors);
+
+      CAPTURE_CUDA_ERROR(cudaMalloc(&d_memory, new_size + sizeof(real) + sizeof(int)), errors);
+      device_workspace_size = new_size;
+
+      d_real_result = (real*)d_memory;
+      d_info        = (int* )(((u8*)d_memory) + sizeof(real));
+      d_workspace   = (void*)(((u8*)d_memory) + sizeof(real) + sizeof(int));
+   }
+
+   void resize_host_workspace(size_t new_size)
+   {
+      h_workspace.reset(std::make_unique<u8[]>(new_size));
+      host_workspace_size = new_size;
+   }
+
+   real get_real_result()
+   {
+      real result;
+      cuda_memcpy_to_host(&result, d_real_result, sizeof(real))
+      return result;
+   }
+
+   int get_info()
+   {
+      int result;
+      cuda_memcpy_to_host(&result, d_info, sizeof(int))
+      return result;
+   }
+
+   cusolverDnHandle_t cusolver_handle;
+
+   void* d_workspace = 0;
+   real* d_real_result = 0;
+   int* d_info = 0;
+   std::unique_ptr<u8[]> h_workspace;
+   size_t device_workspace_size = 0; // In bytes
+   size_t host_workspace_size = 0;   // In bytes
+
+private:
+   Error_stream* const errors;
+   void* d_memory = 0;
+};
+
+Hubbard_compute_device::Hubbard_compute_device(Error_stream* errors) : errors(errors)
+{
+   bool init_ok = (gpuDeviceInit(gpuGetMaxGflopsDeviceId()) >= 0);
+   assert(init_ok);
+
+   size_t device_workspace_init_size = 100*1024*1024;
+   size_t host_workspace_init_size = 100*1024*1024;
+   ctx = std::make_unique<Compute_context>(device_workspace_init_size, host_workspace_init_size, errors);
+}
+
+Hubbard_compute_device::~Hubbard_compute_device()
+{
+
+}
 
 __device__
 static int mod(int a, int b)
@@ -99,30 +226,6 @@ static bool cmp_det_config(Det det1, Det det2, HubbardParams params)
    return (det_config_ID(det1, params) == det_config_ID(det2, params));
 }
 
-#define CHECK_NO_CUDA_ERRORS assert(capture_cuda_error(cudaGetLastError(), __LINE__, __FILE__))
-#define CAPTURE_LAST_CUDA_ERROR(...) capture_cuda_error(cudaGetLastError(), __LINE__, __FILE__, EXPAND(__VA_ARGS__))
-#define CAPTURE_CUDA_ERROR(call, ...) capture_cuda_error(call, __LINE__, __FILE__, EXPAND(__VA_ARGS__))
-bool capture_cuda_error(cudaError_t error, int line, const char* file, std::stringstream* const errors = 0)
-{
-   bool no_errors = true;
-   if(error != cudaSuccess)
-   {
-      if(errors)
-      {
-         *errors << file << "(" << line << "): " << cudaGetErrorName(error) 
-                 << ": " << cudaGetErrorString(error) << std::endl;
-      }
-
-      no_errors = false;
-   }
-
-   return no_errors;
-}
-
-bool init_compute(std::stringstream* const errors = 0)
-{
-   return (gpuDeviceInit(gpuGetMaxGflopsDeviceId()) >= 0);
-}
 
 __global__
 void H_int_element_term(const Det* const __restrict__ bra_dets, const real* const __restrict__ bra_coeffs,
@@ -158,9 +261,9 @@ void H_int_element_term(const Det* const __restrict__ bra_dets, const real* cons
    }
 }
 
-real compute_H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
-                           const Det* const ket_dets, const real* const ket_coeffs, int ket_count,
-                           const HubbardParams& params)
+real Hubbard_compute_device::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
+                                           const Det* const ket_dets, const real* const ket_coeffs, int ket_count,
+                                           const HubbardParams& params)
 {
    assert(bra_count > 0 && ket_count > 0);
 
@@ -193,10 +296,10 @@ real compute_H_int_element(const Det* const bra_dets, const real* const bra_coef
       cudaMalloc(&d_ket_dets,   sizeof(Det)*ket_count);
       cudaMalloc(&d_ket_coeffs, sizeof(real)*ket_count);
 
-      cuda_memcpy_to_device(bra_dets,   d_bra_dets,   sizeof(Det)*bra_count);
-      cuda_memcpy_to_device(bra_coeffs, d_bra_coeffs, sizeof(real)*bra_count);
-      cuda_memcpy_to_device(ket_dets,   d_ket_dets,   sizeof(Det)*ket_count);
-      cuda_memcpy_to_device(ket_coeffs, d_ket_coeffs, sizeof(real)*ket_count);
+      cuda_memcpy_to_device(d_bra_dets,   bra_dets,    sizeof(Det)*bra_count);
+      cuda_memcpy_to_device(d_bra_coeffs, bra_coeffs,  sizeof(real)*bra_count);
+      cuda_memcpy_to_device(d_ket_dets,   ket_dets,    sizeof(Det)*ket_count);
+      cuda_memcpy_to_device(d_ket_coeffs, ket_coeffs,  sizeof(real)*ket_count);
 
       CHECK_NO_CUDA_ERRORS;
 
@@ -206,7 +309,7 @@ real compute_H_int_element(const Det* const bra_dets, const real* const bra_coef
       H_int_element_term<<<block_count, threads_per_block>>>(d_bra_dets, d_bra_coeffs,
                                                              d_ket_dets, d_ket_coeffs,
                                                              bra_count, params, d_result);
-      cuda_memcpy_to_host(d_result, &result, sizeof(result));
+      cuda_memcpy_to_host(&result, d_result, sizeof(result));
       cudaFree(d_result);
       result *= params.U/params.Ns;
 
@@ -222,8 +325,90 @@ real compute_H_int_element(const Det* const bra_dets, const real* const bra_coef
    return result;
 }
 
-real sym_eigs()
+real Hubbard_compute_device::sym_eigs_smallest(real* elements, int dim)
 {
-   assert(!"Not implemented!");
-   return 0;
+   int64_t found_count;
+   real* d_elements;
+   size_t elements_sz = dim*dim*sizeof(real);
+   cudaMalloc(&d_elements, elements_sz); // TODO: Preallocate
+   cuda_memcpy_to_device(d_elements, elements, elements_sz);
+
+   cusolverEigMode_t jobz = CUSOLVER_EIG_MODE_NOVECTOR;
+   cusolverEigRange_t range = CUSOLVER_EIG_RANGE_I;
+   cublasFillMode_t uplo = CUBLAS_FILL_MODE_LOWER;
+   int64_t lda = dim;
+   int64_t il = 1;
+   int64_t iu = 1;
+
+   size_t required_device_workspace_size;
+   size_t required_host_workspace_size;
+   cusolverStatus_t buffer_info_status = cusolverDnXsyevdx_bufferSize(
+       ctx->cusolver_handle,            // cusolverDnHandle_t handle,
+       NULL,                            // cusolverDnParams_t params,
+       jobz,                            // cusolverEigMode_t jobz,
+       range,                           // cusolverEigRange_t range,
+       uplo,                            // cublasFillMode_t uplo,
+       dim,                             // int64_t n,
+       CUDA_REAL,                       // cudaDataType dataTypeA
+       d_elements,                      // void *A,
+       lda,                             // int64_t lda,
+       0,                               // void * vl,
+       0,                               // void * vu,
+       il,                              // int64_t il,
+       iu,                              // int64_t iu,
+       &found_count,                    // int64_t *meig64,
+       CUDA_REAL,                       // cudaDataType dataTypeW,
+       ctx->d_real_result,              // void *W,
+       CUDA_COMP_TYPE,                  // cudaDataType computeType,
+       &required_device_workspace_size, // size_t *workspaceInBytesOnDevice,
+       &required_host_workspace_size    // size_t *workspaceInBytesOnHost
+   );
+
+   if(ctx->device_workspace_size < required_device_workspace_size)
+   {
+      ctx->resize_device_workspace(required_device_workspace_size);
+   }
+
+   if(ctx->host_workspace_size < required_host_workspace_size)
+   {
+      ctx->resize_host_workspace(required_host_workspace_size);
+   }
+       
+   void* W;
+   cudaMalloc(&W, dim*sizeof(real)); // TODO: Preallocate
+   cusolverStatus_t status = cusolverDnXsyevdx(
+       ctx->cusolver_handle,          // cusolverDnHandle_t handle,
+       NULL,                          // cusolverDnParams_t params,
+       jobz,                          // cusolverEigMode_t jobz,
+       range,                         // cusolverEigRange_t range,
+       uplo,                          // cublasFillMode_t uplo,
+       dim,                           // int64_t n,
+       CUDA_REAL,                     // cudaDataType dataTypeA
+       d_elements,                    // void *A,
+       lda,                           // int64_t lda,
+       0,                             // void * vl,
+       0,                             // void * vu,
+       il,                            // int64_t il,
+       iu,                            // int64_t iu,
+       &found_count,                  // int64_t *meig64,
+       CUDA_REAL,                     // cudaDataType dataTypeW,
+       W,                             // void *W,
+       CUDA_COMP_TYPE,                // cudaDataType computeType,
+       ctx->d_workspace,              // void *bufferOnDevice,
+       ctx->device_workspace_size,    // size_t workspaceInBytesOnDevice,
+       ctx->h_workspace.get(),        // void *bufferOnHost,
+       ctx->host_workspace_size,      // size_t workspaceInBytesOnHost,
+       ctx->d_info                    // int *info
+   );
+   cudaFree(d_elements);
+
+   int info = ctx->get_info()
+   assert(status == CUSOLVER_STATUS_SUCCESS);
+   assert(info == 0);
+
+   real result;
+   cuda_memcpy_to_host(&result, W, sizeof(result));
+   cudaFree(W);
+
+   return result;
 }

@@ -3,13 +3,15 @@
 #include "basis.cpp"
 #include "solver.cpp"
 
+#include "profiler.h"
+
 int main()
 {
-   std::stringstream error_stream;
-   bool compute_status = init_compute(&error_stream);
-   if(!compute_status)
+   Error_stream errors;
+   Hubbard_compute_device compute_device(&errors);
+   if(errors.has_errors)
    {
-      std::cout << error_stream.rdbuf();
+      std::cout << errors;
       return -1;
    }
 
@@ -23,7 +25,7 @@ int main()
 
    KConfigs configs = get_k_orbitals(params);
 
-   real E0 = kfm_basis_compute_E0(configs, params);
+   real E0 = kfm_basis_compute_E0(compute_device, configs, params);
 
    std::cout << "N = " << N_up + N_down
              << ", Ns = " << Ns

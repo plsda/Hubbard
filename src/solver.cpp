@@ -120,7 +120,7 @@ real halffilled_E_per_N(real T, real U, IntArgs int_args)
    return -4.0*T*integ;
 }
 
-real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
+real kfm_basis_compute_E0(Hubbard_compute_device& cdev, const KConfigs& configs, const HubbardParams& params)
 {
    u32 k_count = params.Ns;
    real m = 0.5*(params.N_up - params.N_down);
@@ -218,9 +218,9 @@ real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
 
                   const real* const ket_coeffs_data = ket_coeffs.data();
                   // Diagonal
-                  real cur_elem = compute_H_int_element(ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
-                                                        ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
-                                                        params);
+                  real cur_elem = cdev.H_int_element(ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
+                                                     ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
+                                                     params);
                   H_Kf(col_idx, col_idx) += cur_elem;
 
                   // Off-diagonals
@@ -236,9 +236,9 @@ real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
                         Arr3R bra_coeffs = SCFs.slice(offsets, extents);
 
                         const real* const bra_coeffs_data = bra_coeffs.data();
-                        cur_elem = compute_H_int_element(bra_dets.data(), bra_coeffs_data, bra_dets.size(), 
-                                                         ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
-                                                         params);
+                        cur_elem = cdev.H_int_element(bra_dets.data(), bra_coeffs_data, bra_dets.size(), 
+                                                      ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
+                                                      params);
                         H_Kf(row_idx, col_idx) += cur_elem;
                         H_Kf(col_idx, row_idx) += cur_elem;
 
@@ -256,9 +256,9 @@ real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
                         Arr3R bra_coeffs = SCFs.slice(offsets, extents);
 
                         const real* const bra_coeffs_data = bra_coeffs.data();
-                        cur_elem = compute_H_int_element(bra_dets.data(), bra_coeffs_data, bra_dets.size(), 
-                                                         ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
-                                                         params);
+                        cur_elem = cdev.H_int_element(bra_dets.data(), bra_coeffs_data, bra_dets.size(), 
+                                                      ket_dets.data(), ket_coeffs_data, ket_dets.size(), 
+                                                      params);
                         H_Kf(row_idx, col_idx) += cur_elem;
                         H_Kf(col_idx, row_idx) += cur_elem;
 
@@ -280,9 +280,7 @@ real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
             }
             else
             {
-               // TODO: Use Spectra
-               Eigen::SelfAdjointEigenSolver<MatR> eigensolver(H_Kf.matrix());
-               E0 = eigensolver.eigenvalues()[0];
+               E0 = cdev.sym_eigs_smallest(H_Kf.data(), Kf_dim);
             }
 
             if(E0 < min_E)
@@ -305,9 +303,9 @@ real kfm_basis_compute_E0(const KConfigs& configs, const HubbardParams& params)
    return min_E;
 }
 
-real kfm_basis_compute_E0(const HubbardParams& params)
+real kfm_basis_compute_E0(Hubbard_compute_device& cdev, const HubbardParams& params)
 {
    KConfigs configs = get_k_orbitals(params);
-   return kfm_basis_compute_E0(configs, params);
+   return kfm_basis_compute_E0(cdev, configs, params);
 }
 

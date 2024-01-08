@@ -51,7 +51,6 @@ INSTANTIATE_TEST_SUITE_P(HIntTest_small, HIntTest,
                               HubbardParams(1, 2.7, 7,   4,  3)
                           ));
 
-
 #define set_up_KS_basis(...) ASSERT_NO_FATAL_FAILURE(EXPAND(__set_up_KS_basis(__VA_ARGS__)));
 void __set_up_KS_basis(const HubbardParams& params, 
                        std::vector<std::shared_ptr<std::vector<Det>>>& Kf_basis,
@@ -338,12 +337,11 @@ void HIntTest::SetUp()
    std::vector<real> Kf_spins;
 
    set_up_KS_basis(params, Kf_basis, Kf_counts, Kf_single_counts, Kf_spins, SCFs, max_config_count, max_path_count);
-
 }
 
 TEST_P(HIntTest, test_Hint)
 {
-   // NOTE: Verify that compute_H_int_element gives a symmetric (real) matrix with reasonable cofficients
+   // NOTE: Verify that H_int_element gives a symmetric (real) matrix with reasonable cofficients
 
    const HubbardParams& params = GetParam();
 
@@ -363,12 +361,14 @@ TEST_P(HIntTest, test_Hint)
 
             for(int bra_path_idx = 0; bra_path_idx < Kf_counts[bra_k_idx]; bra_path_idx++)
             {
-               real H_Kf_rc = compute_H_int_element(bra_dets.data(), SCFs.data() + testbra_first_coeff_idx, testbra_det_count,
-                                                    ket_dets.data(), SCFs.data() + testket_first_coeff_idx, testket_det_count,
-                                                    params);
-               real H_Kf_cr = compute_H_int_element(ket_dets.data(), SCFs.data() + testket_first_coeff_idx, testket_det_count,
-                                                    bra_dets.data(), SCFs.data() + testbra_first_coeff_idx, testbra_det_count,
-                                                    params);
+               real H_Kf_rc =
+                  global_test_env->cdev.H_int_element(bra_dets.data(), SCFs.data() + testbra_first_coeff_idx, testbra_det_count,
+                                                      ket_dets.data(), SCFs.data() + testket_first_coeff_idx, testket_det_count,
+                                                      params);
+               real H_Kf_cr =
+                  global_test_env->cdev.H_int_element(ket_dets.data(), SCFs.data() + testket_first_coeff_idx, testket_det_count,
+                                                      bra_dets.data(), SCFs.data() + testbra_first_coeff_idx, testbra_det_count,
+                                                      params);
 
                ASSERT_NEAR(H_Kf_rc, H_Kf_cr, real(1e-5));
                ASSERT_LE(std::abs(H_Kf_rc), (params.U/params.Ns)*params.Ns*params.Ns*params.Ns*ket_dets.size()*bra_dets.size());
@@ -400,7 +400,7 @@ TEST(SolverTest, test_dimer_E0)
    for(const HubbardParams& p : params)
    {
       real ground_truth = dimer_E0(p, BCS::PERIODIC);
-      real result = kfm_basis_compute_E0(p);
+      real result = kfm_basis_compute_E0(global_test_env->cdev, p);
 
       EXPECT_NEAR(result, ground_truth, TEST_E_TOL) << p;
    }
@@ -422,7 +422,7 @@ TEST(SolverTest, test_atomic_E0)
    for(const HubbardParams& p : params)
    {
       real ground_truth = atomic_E0(p);
-      real result = kfm_basis_compute_E0(p);
+      real result = kfm_basis_compute_E0(global_test_env->cdev, p);
 
       EXPECT_NEAR(result, ground_truth, TEST_E_TOL) << p;
    }
@@ -443,7 +443,7 @@ TEST(SolverTest, test_noninteracting_E0)
    for(const HubbardParams& p : params)
    {
       real ground_truth = noninteracting_E0(p, BCS::PERIODIC);
-      real result = kfm_basis_compute_E0(p);
+      real result = kfm_basis_compute_E0(global_test_env->cdev, p);
 
       EXPECT_NEAR(result, ground_truth, TEST_E_TOL) << p;
    }

@@ -4,6 +4,22 @@
 
 #define TEST_E_TOL real(1e-4)
 
+class Hubbard_environment : public ::testing::Environment
+{
+public:
+   Hubbard_environment() : errors(), cdev(&errors) {};
+
+   void SetUp() override 
+   {
+      ASSERT_FALSE(errors.has_errors) << errors;
+   }
+
+   Error_stream errors;
+   Hubbard_compute_device cdev;
+};
+
+static Hubbard_environment* const global_test_env = static_cast<Hubbard_environment*>(::testing::AddGlobalTestEnvironment(new Hubbard_environment));
+
 template <StructuralHubbardParams P>       
 class KSBasisTest : public testing::TestWithParam<HubbardParams>
 {

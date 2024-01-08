@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.25)
 # ---------- Languages and options ----------
 project(Hubbard LANGUAGES CXX)
 
-option(HUBBARD_TESTING ON)
+option(HUBBARD_TESTING "" ON)
 option(HUBBARD_UPDATE_SUBMODULES "" OFF)
 option(HUBBARD_USE_CUDA "" ON)
 
@@ -17,8 +17,10 @@ if(HUBBARD_USE_CUDA)
       # NOTE: CUDA options are set globally
       set(CMAKE_CUDA_STANDARD 17)
       set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-      set(CMAKE_CUDA_ARCHITECTURES native) # 86
+      set(CMAKE_CUDA_ARCHITECTURES native)
       set(CMAKE_CUDA_RUNTIME_LIBRARY Static)
+
+      find_package(CUDAToolkit REQUIRED)
    else()
       set(HUBBARD_USE_CUDA OFF CACHE BOOL "" FORCE)
    endif()
@@ -99,7 +101,11 @@ include_directories("${PROJECT_SOURCE_DIR}/src")
 # The code is built as a unity build except for hubbard_compute, which is separated into its own translation unit.
 add_library(hubbard_compute OBJECT $<IF:${use_cuda},src/hubbard_compute.cu,src/hubbard_compute.cpp>)
 #set_target_properties(hubbard_compute PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-target_link_libraries(hubbard_compute PRIVATE hubbard_compiler_flags hubbard_linker_flags $<$<NOT:${use_cuda}>:Eigen3::Eigen>)
+
+set(cusolver_libs CUDA::cusolver CUDA::cublas CUDA::cublasLt CUDA::cusparse)
+target_link_libraries(hubbard_compute PRIVATE
+   hubbard_compiler_flags hubbard_linker_flags 
+   $<IF:${use_cuda},${cusolver_libs},Eigen3::Eigen>)
 
 add_executable(hubbard src/hubbard.cpp)
 target_link_libraries(hubbard PRIVATE hubbard_compiler_flags hubbard_linker_flags hubbard_compute Eigen3::Eigen)
