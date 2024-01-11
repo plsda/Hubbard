@@ -120,7 +120,7 @@ real halffilled_E_per_N(real T, real U, IntArgs int_args)
    return -4.0*T*integ;
 }
 
-real kfm_basis_compute_E0(Hubbard_compute_device& cdev, const KConfigs& configs, const HubbardParams& params)
+real kfm_basis_compute_E0(HubbardComputeDevice& cdev, const KConfigs& configs, const HubbardParams& params)
 {
    u32 k_count = params.Ns;
    real m = 0.5*(params.N_up - params.N_down);
@@ -303,7 +303,13 @@ real kfm_basis_compute_E0(Hubbard_compute_device& cdev, const KConfigs& configs,
    return min_E;
 }
 
-real kfm_basis_compute_E0(Hubbard_compute_device& cdev, const HubbardParams& params)
+real kfm_basis_compute_E0(HubbardComputeDevice& cdev, const HubbardParams& params)
+{
+   KConfigs configs = get_k_orbitals(params);
+   return kfm_basis_compute_E0(cdev, configs, params);
+}
+
+real __kfm_basis_compute_E0(HubbardComputeDevice& cdev, HubbardParams params)
 {
    KConfigs configs = get_k_orbitals(params);
    return kfm_basis_compute_E0(cdev, configs, params);

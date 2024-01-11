@@ -26,7 +26,7 @@ const cudaDataType CUDA_COMP_TYPE = CUDA_REAL;
 #define CHECK_NO_CUDA_ERRORS assert(capture_cuda_error(cudaGetLastError(), __LINE__, __FILE__))
 #define CAPTURE_LAST_CUDA_ERROR(...) capture_cuda_error(cudaGetLastError(), __LINE__, __FILE__, EXPAND(__VA_ARGS__))
 #define CAPTURE_CUDA_ERROR(call, ...) capture_cuda_error(call, __LINE__, __FILE__, EXPAND(__VA_ARGS__))
-bool capture_cuda_error(cudaError_t error, int line, const char* file, Error_stream* const errors = 0)
+bool capture_cuda_error(cudaError_t error, int line, const char* file, ErrorStream* const errors = 0)
 {
    bool no_errors = true;
    if(error != cudaSuccess)
@@ -45,10 +45,10 @@ bool capture_cuda_error(cudaError_t error, int line, const char* file, Error_str
    return no_errors;
 }
 
-class Hubbard_compute_device::Compute_context
+class HubbardComputeDevice::ComputeContext
 {
 public:
-   Compute_context(size_t device_workspace_init_size, size_t host_workspace_init_size, Error_stream* const errors = 0) : errors(errors)
+   ComputeContext(size_t device_workspace_init_size, size_t host_workspace_init_size, ErrorStream* const errors = 0) : errors(errors)
    {
       cusolverStatus_t status = cusolverDnCreate(&cusolver_handle);
       assert(status == CUSOLVER_STATUS_SUCCESS);
@@ -67,7 +67,7 @@ public:
       host_workspace_size = host_workspace_init_size;
    }
 
-   ~Compute_context()
+   ~ComputeContext()
    {
       CAPTURE_CUDA_ERROR(cudaFree(d_memory), errors);
    }
@@ -87,21 +87,21 @@ public:
 
    void resize_host_workspace(size_t new_size)
    {
-      h_workspace.reset(std::make_unique<u8[]>(new_size));
+      h_workspace.reset(new u8[new_size]);
       host_workspace_size = new_size;
    }
 
    real get_real_result()
    {
       real result;
-      cuda_memcpy_to_host(&result, d_real_result, sizeof(real))
+      cuda_memcpy_to_host(&result, d_real_result, sizeof(real));
       return result;
    }
 
    int get_info()
    {
       int result;
-      cuda_memcpy_to_host(&result, d_info, sizeof(int))
+      cuda_memcpy_to_host(&result, d_info, sizeof(int));
       return result;
    }
 
@@ -115,21 +115,21 @@ public:
    size_t host_workspace_size = 0;   // In bytes
 
 private:
-   Error_stream* const errors;
+   ErrorStream* const errors;
    void* d_memory = 0;
 };
 
-Hubbard_compute_device::Hubbard_compute_device(Error_stream* errors) : errors(errors)
+HubbardComputeDevice::HubbardComputeDevice(ErrorStream* errors) : errors(errors)
 {
    bool init_ok = (gpuDeviceInit(gpuGetMaxGflopsDeviceId()) >= 0);
    assert(init_ok);
 
    size_t device_workspace_init_size = 100*1024*1024;
    size_t host_workspace_init_size = 100*1024*1024;
-   ctx = std::make_unique<Compute_context>(device_workspace_init_size, host_workspace_init_size, errors);
+   ctx = std::make_unique<ComputeContext>(device_workspace_init_size, host_workspace_init_size, errors);
 }
 
-Hubbard_compute_device::~Hubbard_compute_device()
+HubbardComputeDevice::~HubbardComputeDevice()
 {
 
 }
@@ -261,7 +261,7 @@ void H_int_element_term(const Det* const __restrict__ bra_dets, const real* cons
    }
 }
 
-real Hubbard_compute_device::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
+real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
                                            const Det* const ket_dets, const real* const ket_coeffs, int ket_count,
                                            const HubbardParams& params)
 {
@@ -325,7 +325,7 @@ real Hubbard_compute_device::H_int_element(const Det* const bra_dets, const real
    return result;
 }
 
-real Hubbard_compute_device::sym_eigs_smallest(real* elements, int dim)
+real HubbardComputeDevice::sym_eigs_smallest(real* elements, int dim)
 {
    int64_t found_count;
    real* d_elements;
@@ -402,7 +402,7 @@ real Hubbard_compute_device::sym_eigs_smallest(real* elements, int dim)
    );
    cudaFree(d_elements);
 
-   int info = ctx->get_info()
+   int info = ctx->get_info();
    assert(status == CUSOLVER_STATUS_SUCCESS);
    assert(info == 0);
 

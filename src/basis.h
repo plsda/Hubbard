@@ -27,8 +27,15 @@ struct HubbardParams
    explicit HubbardParams(real T, real U, int Ns, int N_up, int N_down) :
       T(T), U(U), Ns(Ns), N(N_up + N_down), N_up(N_up), N_down(N_down)
    {
-      assert(Ns > 0 && N > 0 && N_up >= 0 && N_down >= 0 &&
-             N_up <= Ns && N_down <= Ns);
+      //assert(Ns > 0 && N > 0 && N_up >= 0 && N_down >= 0 &&
+      //       N_up <= Ns && N_down <= Ns);
+
+      assert(Ns > 0);
+      assert(N > 0);
+      assert(N_up >= 0);
+      assert(N_down >= 0);
+      assert(N_up <= Ns);
+      assert(N_down <= Ns);
    }
 
    constexpr explicit HubbardParams(real T, real U, int Ns, int N_up, int N_down, int) :

@@ -8,6 +8,8 @@ option(HUBBARD_TESTING "" ON)
 option(HUBBARD_UPDATE_SUBMODULES "" OFF)
 option(HUBBARD_USE_CUDA "" ON)
 
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 if(HUBBARD_USE_CUDA)
    include(CheckLanguage)
    check_language(CUDA)
@@ -61,7 +63,7 @@ if(MSVC)
    set_link_flags(RELEASE CUDA "-Xlinker=${cuda_host_common_linker_flags},-nodefaultlib:libcmtd")
 
 elseif((CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"))
-   set(clang_common_compiler_flags "-Werror;-Wall;")
+   set(clang_common_compiler_flags -Werror -Wall)
    set(clang_common_linker_flags "-static-libstdc++,-static-libgcc")
 
    set_comp_flags(DEBUG,RELEASE CXX,CUDA "${clang_common_compiler_flags}")
@@ -74,15 +76,6 @@ set_comp_flags(DEBUG,RELEASE CUDA "${cuda_common_compiler_flags}")
 set_link_flags(DEBUG,RELEASE CUDA "LINKER:${cuda_common_linker_flags}")
 
 # ---------- Dependencies ----------
-find_package(Eigen3 3.4 REQUIRED NO_MODULE)
-
-add_subdirectory("external/spectra")
-get_target_property(spectra_include_dirs Spectra INTERFACE_INCLUDE_DIRECTORIES)
-target_include_directories(hubbard_compiler_flags INTERFACE "$<BUILD_INTERFACE:${spectra_include_dirs}>")
-
-cmake_path(SET cuda_samples_path "$ENV{NVCUDASAMPLES_ROOT}/common/inc")
-include_directories(${cuda_samples_path})
-
 if(HUBBARD_UPDATE_SUBMODULES)
    find_package(Git QUIET)
    if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
@@ -95,20 +88,48 @@ if(HUBBARD_UPDATE_SUBMODULES)
    endif()
 endif()
 
+find_package(Eigen3 3.4 REQUIRED NO_MODULE)
+find_package(OpenGL 3 REQUIRED)
+
+add_subdirectory("external/spectra")
+get_target_property(spectra_include_dirs Spectra INTERFACE_INCLUDE_DIRECTORIES)
+target_include_directories(hubbard_compiler_flags INTERFACE "$<BUILD_INTERFACE:${spectra_include_dirs}>")
+
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory("external/glfw")
+
+target_include_directories(hubbard_compiler_flags INTERFACE "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/imgui>")
+target_include_directories(hubbard_compiler_flags INTERFACE "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/implot>")
+
+cmake_path(SET cuda_samples_path "$ENV{NVCUDASAMPLES_ROOT}/common/inc")
+#include_directories(${cuda_samples_path})
+target_include_directories(hubbard_compiler_flags INTERFACE "$<BUILD_INTERFACE:${cuda_samples_path}>")
+
 # ---------- Targets ----------
 include_directories("${PROJECT_SOURCE_DIR}/src")
 
-# The code is built as a unity build except for hubbard_compute, which is separated into its own translation unit.
+# The code is built as a unity build except for hubbard_compute and ImGUI, which are separated into their own translation units
 add_library(hubbard_compute OBJECT $<IF:${use_cuda},src/hubbard_compute.cu,src/hubbard_compute.cpp>)
 #set_target_properties(hubbard_compute PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
+# NOTE: If, for some reason, files are added to/removed from the imgui or implot directories, have to reconfigure for the changes to be detected
+file(GLOB imgui_sources
+   "external/imgui/*.cpp" "external/imgui/*.h"
+   "external/imgui/backends/imgui_impl_opengl3*"
+   "external/imgui/backends/imgui_impl_glfw*"
+   "external/implot/*.h",
+   "external/implot/*.cpp")
+add_library(imgui STATIC ${imgui_sources})
+target_link_libraries(imgui PRIVATE hubbard_compiler_flags OpenGL::GL)
+target_link_libraries(imgui PUBLIC glfw)
+
 set(cusolver_libs CUDA::cusolver CUDA::cublas CUDA::cublasLt CUDA::cusparse)
-target_link_libraries(hubbard_compute PRIVATE
-   hubbard_compiler_flags hubbard_linker_flags 
-   $<IF:${use_cuda},${cusolver_libs},Eigen3::Eigen>)
+target_link_libraries(hubbard_compute PRIVATE hubbard_compiler_flags hubbard_linker_flags $<IF:${use_cuda},${cusolver_libs},Eigen3::Eigen>)
 
 add_executable(hubbard src/hubbard.cpp)
-target_link_libraries(hubbard PRIVATE hubbard_compiler_flags hubbard_linker_flags hubbard_compute Eigen3::Eigen)
+target_link_libraries(hubbard PRIVATE hubbard_compiler_flags hubbard_linker_flags hubbard_compute Eigen3::Eigen imgui $<${WIN32}:winmm>)
 
 # ---------- Testing ----------
 if(HUBBARD_TESTING)
@@ -118,9 +139,9 @@ if(HUBBARD_TESTING)
 
    add_executable(hubbard_testing src/testing.cpp)
 
-   set_target_properties(gtest PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-   set_target_properties(gtest_main PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-   set_target_properties(hubbard_testing PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+   #set_target_properties(gtest PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+   #set_target_properties(gtest_main PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+   #set_target_properties(hubbard_testing PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
    target_link_libraries(hubbard_testing PRIVATE hubbard_compiler_flags hubbard_linker_flags hubbard_compute Eigen3::Eigen gtest gmock gtest_main)
 

@@ -1,12 +1,12 @@
 #include "hubbard.h"
 
-class Hubbard_compute_device::Compute_context {};
+class HubbardComputeDevice::ComputeContext {};
 
-Hubbard_compute_device::Hubbard_compute_device(std::stringstream* const errors = 0) : errors(errors) {}
+HubbardComputeDevice::HubbardComputeDevice(std::stringstream* const errors = 0) : errors(errors) {}
 
-Hubbard_compute_device::~Hubbard_compute_device() {}
+HubbardComputeDevice::~HubbardComputeDevice() {}
 
-real Hubbard_compute_device::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
+real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
                                            const Det* const ket_dets, const real* const ket_coeffs, int ket_count,
                                            const HubbardParams& params)
 {
@@ -62,7 +62,7 @@ real Hubbard_compute_device::H_int_element(const Det* const bra_dets, const real
    return result;
 }
 
-real Hubbard_compute_device::sym_eigs_smallest(real* elements, int dim)
+real HubbardComputeDevice::sym_eigs_smallest(real* elements, int dim)
 {
    Eigen::Map<MatR> m(elements, dim, dim);
    Eigen::SelfAdjointEigenSolver<MatR> eigensolver(m);

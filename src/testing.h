@@ -1,24 +1,28 @@
 #ifndef TESTING_H
 
-#include "hubbard.h"
+// #include "hubbard.h"
+
+#include <span>
+#include "hubbard_compute.h"
+#include "solver.h"
 
 #define TEST_E_TOL real(1e-4)
 
-class Hubbard_environment : public ::testing::Environment
+class HubbardEnvironment : public ::testing::Environment
 {
 public:
-   Hubbard_environment() : errors(), cdev(&errors) {};
+   HubbardEnvironment() : errors(), cdev(&errors) {};
 
    void SetUp() override 
    {
       ASSERT_FALSE(errors.has_errors) << errors;
    }
 
-   Error_stream errors;
-   Hubbard_compute_device cdev;
+   ErrorStream errors;
+   HubbardComputeDevice cdev;
 };
 
-static Hubbard_environment* const global_test_env = static_cast<Hubbard_environment*>(::testing::AddGlobalTestEnvironment(new Hubbard_environment));
+static HubbardEnvironment* const global_test_env = static_cast<HubbardEnvironment*>(::testing::AddGlobalTestEnvironment(new HubbardEnvironment));
 
 template <StructuralHubbardParams P>       
 class KSBasisTest : public testing::TestWithParam<HubbardParams>

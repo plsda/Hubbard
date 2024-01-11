@@ -6,15 +6,11 @@
 #include "hubbard_compute.h"
 #include "solver.h"
 
-#include <Eigen/Dense>
-#include <unsupported/Eigen/CXX11/Tensor>
-using MatR = Eigen::Matrix<real, Eigen::Dynamic, Eigen::Dynamic>;
-using Arr2R = Eigen::Array<real, Eigen::Dynamic, Eigen::Dynamic>;
-using Arr3R = Eigen::Tensor<real, 3>;
-
-#include <numbers>
-#define PI std::numbers::pi_v<real>
-#define LOG2 std::numbers::log2e_v<real>
+#include <imgui.h>
+#include <implot.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_opengl3.h>
+#include <GLFW/glfw3.h>
 
 #define HUBBARD_H
 #endif
