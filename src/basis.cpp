@@ -221,23 +221,16 @@ void list_determinants(std::vector<Det>& result, const HubbardParams& params)
 
 int state_momentum(Det det, const HubbardParams& params)
 {
-
     auto [up_det, down_det] = get_det_up_down(det, params);
 
     // NOTE: Here, we take the single-particle momenta to be in the range 0, 1, ..., Ns - 1
     int result = 0;
     for(int sidx = 0; sidx < int(params.Ns); sidx++)
     {
-       // NOTE: Can this overflow? (currently, modulo is taken after the loop)
-       // Max value for a single-particle momentum, k_i, is Ns
-       // Upper bound for the total momentum, K, of a state is 
-       //   K < Ns*(Ns*2) = 2*Ns^2
-       // --> Unlikely to overflow when using int
        result += sidx*(count_state(up_det, sidx) + count_state(down_det, sidx));
     }
 
     result = result % params.Ns;
-
     return result;
 }
 
@@ -274,6 +267,12 @@ int CSV_dim(real spin, int single_count)
    }
 
    return result;
+}
+
+int SM_space_dim(int N, int Ns, real S)
+{
+   // The Weyl-Paldus formula
+   return (2.0*S + 1)*choose(Ns + 1, 0.5*N - S)*(choose(Ns + 1, 0.5*N + S + 1)/(Ns + 1));
 }
 
 Det det_config_ID(Det det, const HubbardParams& params)
@@ -335,6 +334,36 @@ KBasis form_K_basis(const HubbardParams& params)
     sort_multiple(momenta, basis);
 
     return {basis, momenta, block_sizes};
+}
+
+int dets_per_orbital_config(int config_single_count, const HubbardParams& params)
+{
+   assert(config_single_count <= ((params.N <= params.Ns) ? params.N : (2*params.Ns - params.N)));
+   int doubles = (params.N - config_single_count) >> 1;
+   int result = choose(config_single_count, params.N_down - doubles);
+
+   return result;
+}
+
+// Sort the determinant basis returned by form_K_basis by orbital configuration within each K-block
+void sort_K_basis(KBasis& kbasis, const HubbardParams& params)
+{
+   std::vector<Det>& basis = kbasis.basis;
+
+   int i0 = 0;
+   for(int block_size : kbasis.block_sizes)
+   {
+      int i1 = i0 + block_size;
+      std::sort(basis.begin() + i0, basis.begin() + i1,
+                [&params](Det d1, Det d2){ return det_config_ID(d1, params) < det_config_ID(d2, params); }
+                );
+      // NOTE: To also sort by number of singles (for S-path caching); another option is to sort the KS_configs array after callin form_KS_subbasis (less elements to sort but multiple arrays)
+      //std::stable_sort(basis.begin() + i0, basis.begin() + i1,
+      //                 [&params](Det d1, Det d2){ return count_singles(d1, params) < count_singles(d2, params); }
+      //                 );
+
+      i0 += block_size;
+   }
 }
 
 // Naive path search
@@ -464,243 +493,7 @@ real compute_SCF_overlap(Det S_path, Det M_path, int edge_count, real f, real m)
    return overlap;
 }
 
-KConfigs get_k_orbitals(const HubbardParams& params)
-{
-   auto [basis, K, block_sizes] = form_K_basis(params);
-
-   int i0 = 0;
-   std::vector<std::vector<std::shared_ptr<std::vector<Det>>>> orbitals;
-
-   for(int block_size : block_sizes)
-   {
-      int i1 = i0 + block_size;
-
-      std::vector<std::shared_ptr<std::vector<Det>>> K_orbitals;
-      while(i1 > i0)
-      {
-         Det ref_det = basis[i1 - 1];
-         i1--;
-
-         auto ref_K_orbitals = std::make_shared<std::vector<Det>>();
-         ref_K_orbitals->push_back(ref_det);
-
-         int didx = i1 - 1;
-         while(didx >= i0)
-         {
-            Det det = basis[didx];
-
-            if(cmp_det_config(ref_det, det, params))
-            {
-               ref_K_orbitals->push_back(det);
-               pop_vec(basis, didx, i1);
-            }
-
-            didx--;
-         }
-
-         K_orbitals.push_back(ref_K_orbitals);
-      }
-
-      orbitals.push_back(K_orbitals);
-      i0 += block_size;
-   }
-
-   return {orbitals, block_sizes};
-}
-
-void form_KS_subbasis(real f, real m,
-                      const std::vector<std::shared_ptr<std::vector<Det>>>& K_configs,
-                      const std::vector<int>& single_counts,
-                      std::vector<std::shared_ptr<std::vector<Det>>>& Kf_basis,
-                      std::vector<int>& Kf_single_counts,
-                      std::vector<int>& Kf_counts,
-                      std::vector<real>& Kf_spins,
-                      int& max_config_count,
-                      int& max_path_count)
-{
-   max_config_count = 0;
-   max_path_count = 0;
-
-   for(int config_idx = 0; config_idx < K_configs.size(); config_idx++)
-   {
-      const auto config = K_configs[config_idx];
-      int config_single_count = single_counts[config_idx];
-
-      if(config_single_count > 0 && f <= 0.5*config_single_count)
-      {
-         int fstate_count = CSV_dim(f, config_single_count);
-         if(fstate_count > 0)
-         {
-            Kf_basis.push_back(config);
-            Kf_single_counts.push_back(config_single_count);
-            Kf_counts.push_back(fstate_count);
-            Kf_spins.push_back(f);
-
-            if(fstate_count > max_path_count)
-            {
-               max_path_count = fstate_count;
-            }
-         }
-      }
-      else if(f == 0)
-      {
-         // Handle singlets/closed-shell configs
-         assert(m == 0);
-         Kf_basis.push_back(config);
-         Kf_single_counts.push_back(0);
-         Kf_counts.push_back(1);
-         Kf_spins.push_back(f);
-
-         if(max_path_count < 1)
-         {
-            max_path_count = 1;
-         }
-      }
-
-      int cur_config_count = int(config->size());
-      if(cur_config_count > max_config_count)
-      {
-         max_config_count = cur_config_count;
-      }
-   }
-
-}
-
-void form_KS_subbasis(real f, real m,
-                      const std::vector<std::shared_ptr<std::vector<Det>>>& K_configs,
-                      const std::vector<int>& single_counts,
-                      std::vector<std::shared_ptr<std::vector<Det>>>& Kf_basis,
-                      std::vector<int>& Kf_single_counts,
-                      std::vector<int>& Kf_counts,
-                      int& max_config_count,
-                      int& max_path_count)
-{
-   max_config_count = 0;
-   max_path_count = 0;
-
-   for(int config_idx = 0; config_idx < K_configs.size(); config_idx++)
-   {
-      const auto config = K_configs[config_idx];
-      int config_single_count = single_counts[config_idx];
-
-      if(config_single_count > 0 && f <= 0.5*config_single_count)
-      {
-         int fstate_count = CSV_dim(f, config_single_count);
-         if(fstate_count > 0)
-         {
-            Kf_basis.push_back(config);
-            Kf_single_counts.push_back(config_single_count);
-            Kf_counts.push_back(fstate_count);
-
-            if(fstate_count > max_path_count)
-            {
-               max_path_count = fstate_count;
-            }
-         }
-      }
-      else if(f == 0)
-      {
-         // Handle singlets/closed-shell configs
-         assert(m == 0);
-         Kf_basis.push_back(config);
-         Kf_single_counts.push_back(0);
-         Kf_counts.push_back(1);
-
-         if(max_path_count < 1)
-         {
-            max_path_count = 1;
-         }
-      }
-
-      int cur_config_count = int(config->size());
-      if(cur_config_count > max_config_count)
-      {
-         max_config_count = cur_config_count;
-      }
-   }
-
-}
-
-void form_SCFs(real f, real m,
-               std::span<std::shared_ptr<std::vector<Det>>> Kf_basis,
-               std::span<int> single_counts,
-               std::span<int> S_path_counts,
-               std::vector<Det>& S_paths,
-               const HubbardParams& params,
-               std::vector<real>& result)
-{
-   for(int k_idx = 0; k_idx < single_counts.size(); k_idx++)
-   {
-      int s_k = single_counts[k_idx];
-      if(s_k > 0)
-      {
-         S_paths.resize(0);
-         form_S_paths(1, 1, 0.5, s_k, f, S_paths);
-         assert(S_paths.size() == S_path_counts[k_idx]);
-
-         for(int s_path_idx = 0; s_path_idx < S_paths.size(); s_path_idx++)
-         {
-            Det S_path = S_paths[s_path_idx];
-            const auto cur_dets = Kf_basis[k_idx];
-
-            for(int det_idx = 0; det_idx < cur_dets->size(); det_idx++)
-            {
-               Det det = cur_dets->at(det_idx);
-               auto [M_path, M_path_sign] = det2path(det, params);
-
-               result.push_back(M_path_sign*compute_SCF_overlap(S_path, M_path, s_k, f, m));
-            }
-         }
-      }
-      else
-      {
-         assert(Kf_basis[k_idx]->size() == 1);
-         result.push_back(1);
-      }
-   }
-}
-
-void form_SCFs(real f, real m,
-               std::span<std::shared_ptr<std::vector<Det>>> Kf_basis,
-               std::span<int> single_counts,
-               std::span<int> S_path_counts,
-               std::vector<Det>& S_paths,
-               const HubbardParams& params,
-               Arr3R& result)
-{
-   for(int k_idx = 0; k_idx < single_counts.size(); k_idx++)
-   {
-      int s_k = single_counts[k_idx];
-      if(s_k > 0)
-      {
-         S_paths.resize(0);
-         form_S_paths(1, 1, 0.5, s_k, f, S_paths);
-         assert(S_paths.size() == S_path_counts[k_idx]);
-
-         for(int s_path_idx = 0; s_path_idx < S_paths.size(); s_path_idx++)
-         {
-            Det S_path = S_paths[s_path_idx];
-            const auto cur_dets = Kf_basis[k_idx];
-
-            for(int det_idx = 0; det_idx < cur_dets->size(); det_idx++)
-            {
-               Det det = cur_dets->at(det_idx);
-               auto [M_path, M_path_sign] = det2path(det, params);
-
-               result(k_idx, s_path_idx, det_idx) = M_path_sign*compute_SCF_overlap(S_path, M_path, s_k, f, m);
-            }
-
-         }
-      }
-      else
-      {
-         assert(Kf_basis[k_idx]->size() == 1);
-         result(k_idx, 0, 0) = 1;
-      }
-   }
-}
-
-real SCF_spin(const std::vector<Det>& dets, std::span<real> coeffs, const HubbardParams& params)
+real SCF_spin(const std::span<Det>& dets, const std::span<real>& coeffs, const HubbardParams& params)
 {
    int Ns = params.Ns;
    real m = 0.5*(params.N_up - params.N_down);
@@ -740,8 +533,8 @@ real SCF_spin(const std::vector<Det>& dets, std::span<real> coeffs, const Hubbar
    return result;
 }
 
-real SCF_inner(const std::vector<Det>& bra_dets, std::span<real> bra_coeffs, 
-               const std::vector<Det>& ket_dets, std::span<real> ket_coeffs)
+real SCF_inner(const std::span<Det>& bra_dets, const std::span<real>& bra_coeffs, 
+               const std::span<Det>& ket_dets, const std::span<real>& ket_coeffs)
 {
    real result = 0;
    for(int bra_det_idx = 0; bra_det_idx < bra_dets.size(); bra_det_idx++)
@@ -757,4 +550,3 @@ real SCF_inner(const std::vector<Det>& bra_dets, std::span<real> bra_coeffs,
 
    return result;
 }
-

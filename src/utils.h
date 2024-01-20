@@ -6,11 +6,11 @@ template <class T>
 class RangeItr
 {
 public:
+   using iterator_category = std::random_access_iterator_tag;
    using difference_type = std::ptrdiff_t;
    using value_type = T;
    using pointer = T*;
    using reference = T&;
-   using iterator_category = std::random_access_iterator_tag;
 
    T cur;
 
@@ -85,51 +85,24 @@ public:
    }
 
 
-   T operator*()
-   {
-      return cur;
-   }
+   T operator*() { return cur; }
 
-   pointer operator->()
-   {
-      return &cur;
-   }
+   pointer operator->() { return &cur; }
 
-   reference operator[](difference_type i)
-   {
-      return *(*this + i);
-   }
+   reference operator[](difference_type i) { return *(*this + i); }
 
 
-   bool operator==(const RangeItr<T>& it) const
-   {
-      return cur == it.cur;
-   }
+   bool operator==(const RangeItr<T>& it) const { return cur == it.cur; }
 
-   bool operator<(const RangeItr<T>& it) const
-   {
-      return cur < it.cur;
-   }
+   bool operator<(const RangeItr<T>& it) const  { return cur < it.cur; }
 
-   bool operator!=(const RangeItr<T>& it) const
-   {
-      return !(*this == it);
-   }
+   bool operator!=(const RangeItr<T>& it) const { return !(*this == it); }
 
-   bool operator>(const RangeItr<T>& it) const
-   {
-      return it < *this;
-   }
+   bool operator>(const RangeItr<T>& it) const  { return it < *this; }
 
-   bool operator<=(const RangeItr<T>& it) const
-   {
-      return !(it < *this);
-   }
+   bool operator<=(const RangeItr<T>& it) const { return !(it < *this); }
 
-   bool operator>=(const RangeItr<T>& it) const
-   {
-      return !(*this < it);
-   }
+   bool operator>=(const RangeItr<T>& it) const { return !(*this < it); }
 
 };
 
@@ -138,16 +111,10 @@ class Range
 {
 public:
    explicit Range(T begin_val, T end_val) : begin_val(begin_val), end_val(end_val) {}
+   explicit Range(T end_val) : begin_val(0), end_val(end_val) {}
 
-   RangeItr<T> begin()
-   {
-      return RangeItr<T>(begin_val);
-   }
-
-   RangeItr<T> end()
-   {
-      return RangeItr<T>(end_val);
-   }
+   RangeItr<T> begin() { return RangeItr<T>(begin_val); }
+   RangeItr<T> end() { return RangeItr<T>(end_val); }
 
 private:
    T begin_val;

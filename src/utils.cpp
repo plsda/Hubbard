@@ -1,5 +1,4 @@
 
-
 template <class... Arrays>
 void sort_multiple(Arrays&... arrays)
 {
@@ -80,6 +79,9 @@ bool is_close(real a, real ref, real abs_tol = 1e-8, real rel_tol = 1e-5)
 // Binomial coefficient with integer arguments
 u64 choose(u32 n, u32 m)
 {
+   //if(n == 0 && m == 0) { return 0; }
+   if(n < m) { return 0; }
+
    u64 result = 1;
    m = std::min(m, n - m);
 

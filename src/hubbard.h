@@ -4,6 +4,7 @@
 #include <span>
 
 #include "hubbard_compute.h"
+#include "allocator.h"
 #include "solver.h"
 
 #include <imgui.h>

@@ -62,6 +62,7 @@ public:
       d_workspace   = (void*)(((u8*)d_memory) + sizeof(real) + sizeof(int));
 
       h_workspace = std::make_unique<u8[]>(host_workspace_init_size);
+      //h_workspace = std::make_shared<u8[]>(host_workspace_init_size);
 
       device_workspace_size = device_workspace_init_size;
       host_workspace_size = host_workspace_init_size;

@@ -119,7 +119,7 @@ file(GLOB imgui_sources
    "external/imgui/*.cpp" "external/imgui/*.h"
    "external/imgui/backends/imgui_impl_opengl3*"
    "external/imgui/backends/imgui_impl_glfw*"
-   "external/implot/*.h",
+   "external/implot/*.h"
    "external/implot/*.cpp")
 add_library(imgui STATIC ${imgui_sources})
 target_link_libraries(imgui PRIVATE hubbard_compiler_flags OpenGL::GL)
