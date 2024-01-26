@@ -3,12 +3,15 @@
 #define HUBBARD_TEST
 
 #include <span>
-#include "hubbard_compute.h"
+
+#include "common.h"
 #include "allocator.h"
+#include "utils.h"
+#include "basis.h"
+#include "compute.h"
 #include "solver.h"
 
 #define TEST_E_TOL real(1e-4)
-
 const size_t TEST_ARENA_SIZE = 100*1024*1024;
 
 class HubbardEnvironment : public ::testing::Environment
@@ -25,8 +28,8 @@ public:
    HubbardComputeDevice cdev;
    ArenaAllocator allocator;
 };
-
 static HubbardEnvironment* const global_test_env = static_cast<HubbardEnvironment*>(::testing::AddGlobalTestEnvironment(new HubbardEnvironment));
+//static HubbardEnvironment* global_test_env;
 
 template <StructuralHubbardParams P>       
 class KSBasisTest : public testing::TestWithParam<HubbardParams>
@@ -38,7 +41,9 @@ public:
    static inline const HubbardParams params = P;
 
 protected:
-   static inline KSBlockIterator itr = KSBlockIterator(P, TEST_ARENA_SIZE);
+//   static inline ArenaAllocator allocator = ArenaAllocator(TEST_ARENA_SIZE);
+//   static inline KSBlockIterator itr = KSBlockIterator(P, allocator, P.KS_block_count()*hubbard_memory_requirements(P));
+   static inline KSBlockIterator itr = KSBlockIterator(P, global_test_env->allocator, P.KS_block_count()*hubbard_memory_requirements(P));
 };
 
 class KBasisTest : public testing::TestWithParam<HubbardParams> {};
@@ -46,7 +51,9 @@ class KBasisTest : public testing::TestWithParam<HubbardParams> {};
 class HIntTest : public testing::TestWithParam<HubbardParams>
 {
 public:
-   HIntTest() : itr({GetParam()}, TEST_ARENA_SIZE) {}
+//   static inline ArenaAllocator allocator = ArenaAllocator(TEST_ARENA_SIZE);
+//   HIntTest() : itr(GetParam(), allocator, GetParam().KS_block_count()*hubbard_memory_requirements(GetParam())) {}
+   HIntTest() : itr(GetParam(), global_test_env->allocator, GetParam().KS_block_count()*hubbard_memory_requirements(GetParam())) {}
 
 protected:
    void SetUp() override;
@@ -57,20 +64,20 @@ protected:
 
 void __set_up_KS_configs(KSBlockIterator& itr, const HubbardParams& params);
 
-void __test_basis_K_and_configs(KSBlockIterator& itr, const std::vector<std::span<Det>>& KS_configs, const std::vector<int>& KS_S_path_counts,
-                                const std::vector<real>& KS_spins, std::vector<real>& SCFs, const HubbardParams& params);
+void __test_basis_K_and_configs(KSBlockIterator& itr, const std::vector<std::span<Det>, SpanArena>& KS_configs, const std::vector<int, IntArena>& KS_S_path_counts,
+                                const std::vector<real, RealArena>& KS_spins, std::vector<real, RealArena>& CSFs, const HubbardParams& params);
 
-void __test_SCF_orthonormality(KSBlockIterator& itr, const std::vector<std::span<Det>>& KS_configs, const std::vector<int>& KS_S_path_counts,
-                               const std::vector<real>& KS_spins, std::vector<real>& SCFs, const HubbardParams& params);
+void __test_CSF_orthonormality(KSBlockIterator& itr, const std::vector<std::span<Det>, SpanArena>& KS_configs, const std::vector<int, IntArena>& KS_S_path_counts,
+                               const std::vector<real, RealArena>& KS_spins, std::vector<real, RealArena>& CSFs, const HubbardParams& params);
 
-void __test_SCF_spins(KSBlockIterator& itr, const std::vector<std::span<Det>>& KS_configs, const std::vector<int>& KS_S_path_counts,
-                      const std::vector<real>& KS_spins, std::vector<real>& SCFs, const HubbardParams& params);
+void __test_CSF_spins(KSBlockIterator& itr, const std::vector<std::span<Det>, SpanArena>& KS_configs, const std::vector<int, IntArena>& KS_S_path_counts,
+                      const std::vector<real, RealArena>& KS_spins, std::vector<real, RealArena>& CSFs, const HubbardParams& params);
 
 #define KS_BASIS_TEST___(suite_name, T, U, Ns, N_up, N_dn)\
    using suite_name = KSBasisTest<StructuralHubbardParams{(real)T, (real)U, Ns, N_up, N_dn}>;\
-   TEST_P(suite_name, test_basis_K_and_configs) { ASSERT_NO_FATAL_FAILURE(__test_basis_K_and_configs(itr, itr.KS_configs, itr.KS_S_path_counts, itr.KS_spins, itr.KS_SCF_coeffs, params)); }\
-   TEST_P(suite_name, test_SCF_orthonormality)  { ASSERT_NO_FATAL_FAILURE(__test_SCF_orthonormality( itr, itr.KS_configs, itr.KS_S_path_counts, itr.KS_spins, itr.KS_SCF_coeffs, params)); }\
-   TEST_P(suite_name, test_SCF_spins)           { ASSERT_NO_FATAL_FAILURE(__test_SCF_spins(          itr, itr.KS_configs, itr.KS_S_path_counts, itr.KS_spins, itr.KS_SCF_coeffs, params)); }\
+   TEST_P(suite_name, test_basis_K_and_configs) { ASSERT_NO_FATAL_FAILURE(__test_basis_K_and_configs(itr, itr.KS_configs, itr.KS_S_path_counts, itr.KS_spins, itr.KS_CSF_coeffs, params)); }\
+   TEST_P(suite_name, test_CSF_orthonormality)  { ASSERT_NO_FATAL_FAILURE(__test_CSF_orthonormality( itr, itr.KS_configs, itr.KS_S_path_counts, itr.KS_spins, itr.KS_CSF_coeffs, params)); }\
+   TEST_P(suite_name, test_CSF_spins)           { ASSERT_NO_FATAL_FAILURE(__test_CSF_spins(          itr, itr.KS_configs, itr.KS_S_path_counts, itr.KS_spins, itr.KS_CSF_coeffs, params)); }\
    INSTANTIATE_TEST_SUITE_P(suite_name##_inst, suite_name, testing::Values(suite_name::params));
 
 #define KS_BASIS_TEST__(count, ...) EXPAND(KS_BASIS_TEST___(KSBasisTest_##count, __VA_ARGS__))

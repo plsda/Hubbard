@@ -47,7 +47,7 @@ endfunction()
 
 # NOTE: CUDA host compiler should match CXX compiler
 if(MSVC)
-   set(msvc_common_compiler_flags -nologo -Oi -EHa- -GR- -bigobj -WX -wd4244)
+   set(msvc_common_compiler_flags -nologo -Oi -EHa- -GR- -bigobj -WX -wd4244 -Zc:__cplusplus)
    set(msvc_common_linker_flags "-nodefaultlib:msvcrt,-nodefaultlib:msvcrtd")
    string(REPLACE ";" " " cuda_host_common_compiler_flags "${msvc_common_compiler_flags}")
    string(REPLACE "," " " cuda_host_common_linker_flags "${msvc_common_linker_flags}")
@@ -91,10 +91,6 @@ endif()
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 find_package(OpenGL 3 REQUIRED)
 
-add_subdirectory("external/spectra")
-get_target_property(spectra_include_dirs Spectra INTERFACE_INCLUDE_DIRECTORIES)
-target_include_directories(hubbard_compiler_flags INTERFACE "$<BUILD_INTERFACE:${spectra_include_dirs}>")
-
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -111,7 +107,7 @@ target_include_directories(hubbard_compiler_flags INTERFACE "$<BUILD_INTERFACE:$
 include_directories("${PROJECT_SOURCE_DIR}/src")
 
 # The code is built as a unity build except for hubbard_compute and ImGUI, which are separated into their own translation units
-add_library(hubbard_compute OBJECT $<IF:${use_cuda},src/hubbard_compute.cu,src/hubbard_compute.cpp>)
+add_library(hubbard_compute OBJECT $<IF:${use_cuda},src/compute.cu,src/compute.cpp>)
 #set_target_properties(hubbard_compute PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 # NOTE: If, for some reason, files are added to/removed from the imgui or implot directories, have to reconfigure for the changes to be detected

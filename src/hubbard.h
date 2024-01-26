@@ -3,8 +3,11 @@
 #include <iostream>
 #include <span>
 
-#include "hubbard_compute.h"
+#include "common.h"
 #include "allocator.h"
+#include "utils.h"
+#include "basis.h"
+#include "compute.h"
 #include "solver.h"
 
 #include <imgui.h>

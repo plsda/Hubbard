@@ -1,4 +1,24 @@
 
+HubbardSizes operator*(const HubbardSizes& sz, int n)
+{
+   return HubbardSizes{
+      .basis_size                        = n*sz.basis_size,
+      .min_singles                       = n*sz.min_singles,
+      .max_singles                       = n*sz.max_singles,
+      .config_count                      = n*sz.config_count,
+      .K_block_config_count_upper_bound  = n*sz.K_block_config_count_upper_bound,
+      .KS_block_config_count_upper_bound = n*sz.KS_block_config_count_upper_bound,
+      .max_KS_dim                        = n*sz.max_KS_dim,
+      .max_dets_in_config                = n*sz.max_dets_in_config,
+      .max_S_paths                       = n*sz.max_S_paths,
+      .CSF_coeff_count_upper_bound       = n*sz.CSF_coeff_count_upper_bound,
+      .alloc_pad                         =   sz.alloc_pad,
+      .unaligned_workspace_size          = n*sz.unaligned_workspace_size,
+      .workspace_size                    = n*sz.workspace_size
+   };
+}
+HubbardSizes operator*(int n, const HubbardSizes& sz) { return sz*n; }
+
 std::span<Det> StrideItr::operator*() const 
 { 
    return std::span<Det>(data.begin() + strided_idx, (*strides)[idx]); 
@@ -19,14 +39,14 @@ StrideItr StrideItr::operator++(int)
 }
 
 
-SCFItr::SCFItr(int cidx, int pidx, int idx, int first_coeff_idx, const KSBlockIterator& itr) : 
+CSFItr::CSFItr(int cidx, int pidx, int idx, int first_coeff_idx, const KSBlockIterator& itr) : 
       config_idx(cidx), S_path_idx(pidx), idx(idx), first_coeff_idx(first_coeff_idx), block_itr(itr) 
 {
 }
 
-SCFItr& SCFItr::operator++()
+CSFItr& CSFItr::operator++()
 { 
-   first_coeff_idx += block_itr.SCF_size(*this); 
+   first_coeff_idx += block_itr.CSF_size(*this); 
    if(++S_path_idx >= block_itr.KS_S_path_counts[config_idx])
    {
       config_idx++;
@@ -37,68 +57,104 @@ SCFItr& SCFItr::operator++()
    return *this; 
 } 
 
-SCFItr SCFItr::operator++(int)
+CSFItr CSFItr::operator++(int)
 { 
-   SCFItr temp = *this; 
+   CSFItr temp = *this; 
    ++(*this);
    return temp; 
 }
 
+KSBlockIterator::KSBlockIterator(ArenaAllocator& _allocator) : 
+   allocator(&_allocator), 
+cpt(_allocator.begin_provision()),
+   params({}),
+   K_count(0),
+   S_count(0),
+   KS_dim(0),
+   m(0),
+   S_min(0),
+   S_max(0),
+   total_CSF_count(0),
+   K_block_CSF_count(0),
+   K_block_idx(0), 
+   S_block_idx(0),
+   K_KS_basis_begin_idx(0),
+   has_blocks_left(false),
+   S(0),
+   KS_max_path_count(0),
+   KS_H_data(0),
+   basis(                0, DetArena(allocator)),
+   K_block_sizes(        0, IntArena(allocator)),
+   K_block_begin_indices(0, IntArena(allocator)),
+   K_single_counts(      0, IntArena(allocator)),
+   K_dets_per_config(    0, IntArena(allocator)),
+   S_paths(              0, DetArena(allocator)),
+   KS_configs(           0, SpanArena(allocator)),
+   KS_single_counts(     0, IntArena(allocator)),
+   KS_S_path_counts(     0, IntArena(allocator)),
+   KS_CSF_coeffs(        0, RealArena(allocator)),
+#ifdef HUBBARD_TEST
+   KS_spins(             0, RealArena(allocator)),
+#endif
+   _KS_H(MArr2R(NULL, 0, 0))
+{ 
+   allocator->end_provision(cpt);
+}
 
-void KSBlockIterator::init()
-{
-   KBasis kbasis = form_K_basis(params);
-   sort_K_basis(kbasis, params);
-   basis = std::move(kbasis.basis);
-   K_block_sizes = std::move(kbasis.block_sizes);
-   K_block_begin_indices = std::vector<int>(K_block_sizes.size() + 1);
+KSBlockIterator::KSBlockIterator(HubbardParams _params, ArenaAllocator& _allocator, HubbardSizes sz) :
+   allocator(&_allocator), 
+cpt(_allocator, sz.workspace_size),
+   params(_params),
+   K_count(_params.Ns), 
+   basis(                sz.basis_size,                        DetArena(allocator,  sz.basis_size,                        sz.alloc_pad)),
+   K_block_sizes(        _params.Ns,                           IntArena(allocator,  _params.Ns,                           sz.alloc_pad)),
+   K_block_begin_indices(_params.Ns + 1,                       IntArena(allocator,  _params.Ns + 1,                       sz.alloc_pad)),
+   K_single_counts(      sz.K_block_config_count_upper_bound,  IntArena(allocator,  sz.K_block_config_count_upper_bound,  sz.alloc_pad)),
+   K_dets_per_config(    sz.K_block_config_count_upper_bound,  IntArena(allocator,  sz.K_block_config_count_upper_bound,  sz.alloc_pad)),
+   S_paths(              sz.max_S_paths,                       DetArena(allocator,  sz.max_S_paths,                       sz.alloc_pad)),
+   KS_configs(           sz.KS_block_config_count_upper_bound, SpanArena(allocator, sz.KS_block_config_count_upper_bound, sz.alloc_pad)),
+   KS_single_counts(     sz.KS_block_config_count_upper_bound, IntArena(allocator,  sz.KS_block_config_count_upper_bound, sz.alloc_pad)),
+   KS_S_path_counts(     sz.KS_block_config_count_upper_bound, IntArena(allocator,  sz.KS_block_config_count_upper_bound, sz.alloc_pad)),
+   KS_CSF_coeffs(        sz.CSF_coeff_count_upper_bound,       RealArena(allocator, sz.CSF_coeff_count_upper_bound,       sz.alloc_pad)), 
+#ifdef HUBBARD_TEST
+   KS_spins(             sz.KS_block_config_count_upper_bound, RealArena(allocator, sz.KS_block_config_count_upper_bound, sz.alloc_pad)),
+#endif
+   _KS_H(MArr2R(NULL, 0, 0))
+{ 
+   KS_H_data = allocator->allocate<real>(sz.max_KS_dim, REAL_EIGEN_ALIGNMENT);
+
+   form_K_basis(basis, K_block_sizes, params);
+   sort_K_basis(basis, K_block_sizes, params);
+
    K_block_begin_indices[0] = 0;
    std::partial_sum(K_block_sizes.cbegin(), K_block_sizes.cend(), K_block_begin_indices.begin() + 1);
 
    m = params.m;
-   S_min = std::abs(m);
-   S_max = 0.5*params.N;
-   S_count = (S_max - S_min) + 1;
-
-   int max_KS_dim = 0;
-   for(int i = 0; i < S_count; i++)
-   {
-      real cur_S = S_min + i;
-      int cur_dim = SM_space_dim(params.N, params.Ns, cur_S);
-      if(max_KS_dim < cur_dim) { max_KS_dim = cur_dim; }
-   }
-   max_KS_dim /= params.Ns;
-   KS_H_data = allocator.allocate<real>(max_KS_dim);
-
-   int max_configs_per_K_block = 0;
-   int block_begin = 0;
-   for(int Kidx = 0; Kidx < K_count; Kidx++)
-   {
-      int cur_count = 0;
-      int block_end = block_begin + K_block_sizes[Kidx];
-      for(int i = block_begin; i < block_end; i += dets_per_orbital_config(count_singles(basis[i], params), params), cur_count++) {}
-      if(max_configs_per_K_block < cur_count) {max_configs_per_K_block = cur_count;}
-
-      block_begin = block_end;
-   }
-   // TODO: Allocate on memory arena
-   K_single_counts = std::vector<int>(max_configs_per_K_block);
-   K_dets_per_config = std::vector<int>(max_configs_per_K_block);
+   S_min = params.S_min();
+   S_max = params.S_max();
+   S_count = params.S_count();
 
    reset();
 }
+
 
 void KSBlockIterator::form_KS_subbasis()
 {
    KS_max_path_count = 0;
 
    int cidx = 0;
+   int S_state_count;
+   int prev_s_k = -1;
    for(auto config : K_configs()) 
    {
       int s_k = K_single_counts[cidx];
       if(s_k > 0 && S <= 0.5*s_k)
       {
-         int S_state_count = CSV_dim(S, s_k);
+         if(prev_s_k != s_k)
+         {
+            S_state_count = CSV_dim(S, s_k);
+            prev_s_k = s_k;
+         }
          if(S_state_count > 0)
          {
             KS_configs.push_back(config);
@@ -133,9 +189,10 @@ void KSBlockIterator::form_KS_subbasis()
 
       cidx++;
    }
+   assert(KS_max_path_count <= S_paths.capacity());
 }
 
-void KSBlockIterator::form_SCFs()
+void KSBlockIterator::form_CSFs()
 {
    int cidx = 0;
    int prev_s_k = -1;
@@ -146,7 +203,6 @@ void KSBlockIterator::form_SCFs()
       {
          if(prev_s_k != s_k)
          {
-            // TODO: Allocate on memory arena (temporary)
             S_paths.resize(0);
             form_S_paths(1, 1, 0.5, s_k, S, S_paths);
             assert(S_paths.size() == KS_S_path_counts[cidx]);
@@ -159,14 +215,14 @@ void KSBlockIterator::form_SCFs()
             for(auto det : config)
             {
                auto [M_path, M_path_sign] = det2path(det, params);
-               KS_SCF_coeffs.push_back(M_path_sign*compute_SCF_overlap(S_path, M_path, s_k, S, m));
+               KS_CSF_coeffs.push_back(M_path_sign*compute_CSF_overlap(S_path, M_path, s_k, S, m));
             }
          }
       }
       else
       {
          assert(KS_configs[cidx].size() == 1);
-         KS_SCF_coeffs.push_back(1);
+         KS_CSF_coeffs.push_back(1);
       }
       cidx++;
    }
@@ -181,7 +237,7 @@ KSBlockIterator& KSBlockIterator::operator++()
       //if(has_blocks_left) { init_S_block(0); }
       init_S_block(0);
 
-      assert(has_blocks_left || (total_SCF_count == basis.size()));
+      assert(has_blocks_left || (total_CSF_count == basis.size()));
    }
 
    return *this;
@@ -189,8 +245,8 @@ KSBlockIterator& KSBlockIterator::operator++()
 
 void KSBlockIterator::reset()
 {
-   total_SCF_count = 0;   // NOTE: For debug only
-   K_block_SCF_count = 0; // NOTE: For debug only
+   total_CSF_count = 0;   // NOTE: For debug only
+   K_block_CSF_count = 0; // NOTE: For debug only
    KS_dim = 0;
    has_blocks_left = true;
    init_K_block(0);
@@ -199,8 +255,8 @@ void KSBlockIterator::reset()
 
 bool KSBlockIterator::next_K_block()
 {
-   assert(K_block_SCF_count == K_block_sizes[K_block_idx]);
-   total_SCF_count += K_block_SCF_count; // NOTE: For debug only
+   assert(K_block_CSF_count == K_block_sizes[K_block_idx]);
+   total_CSF_count += K_block_CSF_count; // NOTE: For debug only
 
    int new_idx = K_block_idx + 1;
    if(new_idx < K_count)
@@ -214,7 +270,7 @@ bool KSBlockIterator::next_K_block()
 
 void KSBlockIterator::init_K_block(int idx)
 {
-   K_block_SCF_count = 0; // NOTE: For debug only
+   K_block_CSF_count = 0; // NOTE: For debug only
    K_block_idx = idx;
    K_KS_basis_begin_idx = K_block_begin_indices[K_block_idx];
 
@@ -263,16 +319,15 @@ void KSBlockIterator::init_S_block(int idx)
 #endif
                 );
 
-   S_paths.reserve(KS_max_path_count);
    KS_dim = std::reduce(KS_S_path_counts.begin(), KS_S_path_counts.end());
    assert(KS_dim >= 0);
-   K_block_SCF_count += KS_dim; // NOTE: For debug only
+   K_block_CSF_count += KS_dim; // NOTE: For debug only
 
    new (&_KS_H)  MArr2R(KS_H_data, KS_dim, KS_dim);
    _KS_H.setZero();
 
-   KS_SCF_coeffs.resize(0);
-   form_SCFs();
+   KS_CSF_coeffs.resize(0);
+   form_CSFs();
 }
 
 StrideItr KSBlockIterator::K_configs()
@@ -280,15 +335,15 @@ StrideItr KSBlockIterator::K_configs()
    return StrideItr(std::span<Det>(basis.begin() + K_KS_basis_begin_idx, K_block_sizes[K_block_idx]), &K_dets_per_config);
 }
 
-KSBlockIterator::SCFs KSBlockIterator::KS_basis(SCFItr first)
+KSBlockIterator::CSFs KSBlockIterator::KS_basis(CSFItr first)
 {
-   return SCFs{.start_cidx = first.config_idx, .start_pidx = first.S_path_idx, .start_idx = first.idx,
+   return CSFs{.start_cidx = first.config_idx, .start_pidx = first.S_path_idx, .start_idx = first.idx,
                .start_first_coeff_idx = first.first_coeff_idx, .block_itr = *this, .KS_dim = KS_dim};
 }
 
-KSBlockIterator::SCFs KSBlockIterator::KS_basis()
+KSBlockIterator::CSFs KSBlockIterator::KS_basis()
 {
-   return SCFs{.start_cidx = 0, .start_pidx = 0, .start_idx = 0, .start_first_coeff_idx = 0,
+   return CSFs{.start_cidx = 0, .start_pidx = 0, .start_idx = 0, .start_first_coeff_idx = 0,
                .block_itr = *this, .KS_dim = KS_dim};
 }
 
@@ -414,8 +469,29 @@ real halffilled_E_per_N(real T, real U, IntArgs int_args)
    return -4.0*T*integ;
 }
 
-real KSM_basis_compute_E0(HubbardComputeDevice& cdev, KSBlockIterator& itr)
+real HubbardModel::H_int(const CSFItr& csf1, const CSFItr& csf2)
 {
+   return cdev.H_int_element(itr.CSF_dets(csf1), itr.CSF_coeffs(csf1), itr.CSF_size(csf1), 
+                             itr.CSF_dets(csf2), itr.CSF_coeffs(csf2), itr.CSF_size(csf2),
+                             params);
+}
+
+real HubbardModel::H_0(Det det)
+{
+   real result = 0;
+   for(int k = 0; k < itr.K_count; k++)
+   {
+      result += noninteracting_E(k + 1, itr.params.T, itr.params.Ns, BCS::PERIODIC)*(count_state(det, k) + count_state(det, itr.params.Ns + k));
+   }
+
+   return result;
+}
+
+real HubbardModel::E0()
+{
+   if(!recompute_E) { return _E0; }
+   //update();
+
    real min_E = std::numeric_limits<real>::max();
 
    for(itr.reset(); itr; ++itr) 
@@ -423,18 +499,15 @@ real KSM_basis_compute_E0(HubbardComputeDevice& cdev, KSBlockIterator& itr)
       if(itr.KS_dim == 0) { continue; }
 
       // H_int
-      for(auto scf1 : itr.KS_basis())
+      for(auto csf1 : itr.KS_basis())
       {
-         // NOTE: The diaognal of H_KS has to be zero before starting to compute H_int since the diagonal is multiplied by 0.5 due to double counting in this loop!
-         for(auto scf2 : itr.KS_basis(scf1))
+         for(auto csf2 : itr.KS_basis(csf1))
          {
-            real cur_elem = cdev.H_int_element(itr.SCF_dets(scf1), itr.SCF_coeffs(scf1), itr.SCF_size(scf1), 
-                                               itr.SCF_dets(scf2), itr.SCF_coeffs(scf2), itr.SCF_size(scf2),
-                                               itr.params);
-            itr.KS_H(scf1, scf2) += cur_elem;
-            itr.KS_H(scf2, scf1) += cur_elem;
+            real cur_elem = H_int(csf1, csf2);
+            itr.KS_H(csf1, csf2) += cur_elem;
+            itr.KS_H(csf2, csf1) += cur_elem; // can comment out this and
          }
-         itr.KS_H(scf1, scf1) *= real(0.5);
+         itr.KS_H(csf1, csf1) *= real(0.5); // this if can safely assume that HubbardComputeDevice expects either only the upper (or lower) triangular part of KS_H to be stored
       }
 
       // H_0
@@ -445,13 +518,7 @@ real KSM_basis_compute_E0(HubbardComputeDevice& cdev, KSBlockIterator& itr)
          Det det = get_config_ref_det(config);
          int state_count = itr.KS_S_path_counts[cidx++];
 
-         real cur_H_0 = 0;
-         for(int k = 0; k < itr.K_count; k++)
-         {
-            cur_H_0 += noninteracting_E(k + 1, itr.params.T, itr.params.Ns, BCS::PERIODIC)*(count_state(det, k) + count_state(det, itr.params.Ns + k));
-         }
-
-         itr.KS_H().matrix().diagonal()(Eigen::seqN(col_idx, state_count)).array() += cur_H_0;
+         itr.KS_H().matrix().diagonal()(Eigen::seqN(col_idx, state_count)).array() += H_0(det);
          col_idx += state_count;
       }
 
@@ -471,11 +538,73 @@ real KSM_basis_compute_E0(HubbardComputeDevice& cdev, KSBlockIterator& itr)
       }
    }
 
+   recompute_E = false;
+   _E0 = min_E;
    return min_E;
 }
 
-real KSM_basis_compute_E0(HubbardComputeDevice& cdev, ArenaAllocator allocator, const HubbardParams& params)
+HubbardSizes hubbard_memory_requirements(HubbardParams params)
 {
-   KSBlockIterator block_itr(params, allocator);
-   return KSM_basis_compute_E0(cdev, block_itr);
+   real S_min = std::abs(params.m);
+   real S_max = 0.5*params.N;
+   int S_count = (S_max - S_min) + 1;
+   int max_KS_dim = 0;
+   for(int i = 0; i < S_count; i++)
+   {
+      real cur_S = S_min + i;
+      int cur_dim = SM_space_dim(params.N, params.Ns, cur_S);
+      if(max_KS_dim < cur_dim) { max_KS_dim = cur_dim; }
+   }
+   if(max_KS_dim > 2) { max_KS_dim /= params.Ns; }
+
+   int min_singles = int(2.0*std::abs(params.m));
+   int max_singles = (params.N <= params.Ns) ? params.N : (2*params.Ns - params.N);
+
+   real A = 0.25*max_singles;
+   real max_csv_S = 0;
+   if(A <= S_min)      { max_csv_S = S_min; }
+   else if(A >= S_max) { max_csv_S = S_max; }
+   else                { max_csv_S = S_min + int(A - S_min); }
+   int max_S_paths = ((max_csv_S == 0) && (max_singles == 0)) ? 1 : CSV_dim(max_csv_S, max_singles);
+
+   int max_dets_in_config = 0;
+   for(int single_count = min_singles; single_count <= max_singles; single_count += 2)
+   {
+      int cur_count = dets_per_orbital_config(single_count, params);
+      if(max_dets_in_config < cur_count) { max_dets_in_config = cur_count; }
+   }
+
+   // NOTE: CSF_coeff_count_upper_bound might be much larger than actually needed
+   HubbardSizes result = {
+      .basis_size                        = params.basis_size(),
+      .min_singles                       = min_singles,
+      .max_singles                       = max_singles,
+      .config_count                      = config_count(params),
+      .K_block_config_count_upper_bound  = ((params.Ns > 1) ? int(std::ceil(float(result.config_count)/float(params.Ns - 1))) : result.config_count),
+      .KS_block_config_count_upper_bound = result.K_block_config_count_upper_bound,
+      .max_KS_dim                        = max_KS_dim,
+      .max_dets_in_config                = max_dets_in_config,
+      .max_S_paths                       = max_S_paths,
+      .CSF_coeff_count_upper_bound       = result.KS_block_config_count_upper_bound*result.max_S_paths*result.max_dets_in_config,
+      .alloc_pad = 16,
+      // TODO: Not all of these need to be available/allocated simultaneously and true required size might be less
+      .unaligned_workspace_size          = 
+         sizeof(Det)*result.basis_size +                                   // basis
+         sizeof(int)*params.Ns +                                           // K_block_sizes
+         sizeof(int)*(params.Ns + 1) +                                     // K_block_begin_indices
+         sizeof(int)*result.K_block_config_count_upper_bound +             // K_single_counts
+         sizeof(int)*result.K_block_config_count_upper_bound +             // K_dets_per_config
+         sizeof(Det)*result.max_S_paths +                                  // S_paths
+         (sizeof(real)*result.max_KS_dim*result.max_KS_dim + REAL_EIGEN_ALIGNMENT) + // KS_H_data
+         sizeof(std::span<Det>)*result.KS_block_config_count_upper_bound + // KS_configs
+         sizeof(int)*result.KS_block_config_count_upper_bound +            // KS_single_counts
+         sizeof(int)*result.KS_block_config_count_upper_bound +            // KS_S_path_counts
+         sizeof(real)*result.CSF_coeff_count_upper_bound                   // KS_CSF_coeffs
+#ifdef HUBBARD_TEST
+         + sizeof(real)*result.KS_block_config_count_upper_bound           // KS_spins
+#endif
+      ,.workspace_size                   = result.unaligned_workspace_size + 16*result.alloc_pad 
+   };
+
+   return result;
 }

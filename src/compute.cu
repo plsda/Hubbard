@@ -3,7 +3,12 @@
 #include <cuda/atomic>
 #include <cusolver_common.h>
 #include <cusolverDn.h>
-#include "hubbard_compute.h"
+
+#include "common.h"
+#include "allocator.h"
+#include "utils.h"
+#include "basis.h"
+#include "compute.h"
 
 // library_types.h
 constexpr cudaDataType real2cuda()

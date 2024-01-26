@@ -15,12 +15,15 @@ using ::testing::Not;
 #include "allocator.cpp"
 #include "solver.cpp"
 
+// NOTE: Do not run these tests in parallel.
+
 //            T   U   Ns N_up N_dn
 KS_BASIS_TEST(1, 2.7, 5,   1,  1)
 KS_BASIS_TEST(1, 2.7, 5,   1,  2)
 KS_BASIS_TEST(1, 2.7, 5,   2,  1)
 KS_BASIS_TEST(1, 2.7, 5,   2,  2)
 KS_BASIS_TEST(1, 2.7, 6,   3,  1)
+//
 KS_BASIS_TEST(1, 2.7, 7,   4,  2)
 KS_BASIS_TEST(1, 2.7, 7,   3,  3)
 KS_BASIS_TEST(1, 2.7, 7,   4,  3)
@@ -54,8 +57,7 @@ INSTANTIATE_TEST_SUITE_P(HIntTest_small, HIntTest,
 #define set_up_KS_configs(...) ASSERT_NO_FATAL_FAILURE(EXPAND(__set_up_KS_configs(__VA_ARGS__)));
 void __set_up_KS_configs(KSBlockIterator& itr, const HubbardParams& params)
 {
-   KSBlockIterator temp_itr(params, TEST_ARENA_SIZE);
-   itr = temp_itr;
+   KSBlockIterator temp_itr(params, global_test_env->allocator, hubbard_memory_requirements(params));
    itr.clear_block_data();
 
    for(temp_itr.reset(); temp_itr; ++temp_itr) 
@@ -75,13 +77,15 @@ void KSBasisTest<P>::SetUpTestSuite()
 template <StructuralHubbardParams P>       
 void KSBasisTest<P>::TearDownTestSuite() 
 {
+   //itr.~KSBlockIterator(); 
+   //allocator.~ArenaAllocator();
 }
 
 void __test_basis_K_and_configs(KSBlockIterator& itr,
-                                const std::vector<std::span<Det>>& KS_configs,
-                                const std::vector<int>& KS_S_path_counts,
-                                const std::vector<real>& KS_spins,
-                                std::vector<real>& KS_SCF_coeffs,
+                                const std::vector<std::span<Det>, SpanArena>& KS_configs,
+                                const std::vector<int, IntArena>& KS_S_path_counts,
+                                const std::vector<real, RealArena>& KS_spins,
+                                std::vector<real, RealArena>& CSFs,
                                 const HubbardParams& params)
 {
    std::vector<int> conf_klist;
@@ -126,21 +130,22 @@ void __test_basis_K_and_configs(KSBlockIterator& itr,
    }
 }
 
-void __test_SCF_orthonormality(KSBlockIterator& itr,
-                               const std::vector<std::span<Det>>& KS_configs,
-                               const std::vector<int>& KS_S_path_counts,
-                               const std::vector<real>& KS_spins,
-                               std::vector<real>& KS_SCF_coeffs,
+void __test_CSF_orthonormality(KSBlockIterator& itr,
+                               const std::vector<std::span<Det>,
+                               SpanArena>& KS_configs,
+                               const std::vector<int, IntArena>& KS_S_path_counts,
+                               const std::vector<real, RealArena>& KS_spins,
+                               std::vector<real, RealArena>& CSFs,
                                const HubbardParams& params)
 {
-   for(auto scf1 : itr.KS_basis())
+   for(auto csf1 : itr.KS_basis())
    {
-      for(auto scf2 : itr.KS_basis())
+      for(auto csf2 : itr.KS_basis())
       {
-         real inner = SCF_inner(itr.SCF_dets_sp(scf1), itr.SCF_coeffs_sp(scf1),
-                                itr.SCF_dets_sp(scf2), itr.SCF_coeffs_sp(scf2));
+         real inner = CSF_inner(itr.CSF_dets_sp(csf1), itr.CSF_coeffs_sp(csf1),
+                                itr.CSF_dets_sp(csf2), itr.CSF_coeffs_sp(csf2));
 
-         if(scf1 != scf2)
+         if(csf1 != csf2)
          {
             ASSERT_NEAR(inner, 0, real(1e-6)); 
          } 
@@ -153,20 +158,22 @@ void __test_SCF_orthonormality(KSBlockIterator& itr,
    }
 }
 
-void __test_SCF_spins(KSBlockIterator& itr,
-                      const std::vector<std::span<Det>>& KS_configs,
-                      const std::vector<int>& KS_S_path_counts,
-                      const std::vector<real>& KS_spins,
-                      std::vector<real>& KS_SCF_coeffs,
+void __test_CSF_spins(KSBlockIterator& itr,
+                      const std::vector<std::span<Det>,
+                      SpanArena>& KS_configs,
+                      const std::vector<int, IntArena>&
+                      KS_S_path_counts,
+                      const std::vector<real, RealArena>& KS_spins,
+                      std::vector<real, RealArena>& CSFs,
                       const HubbardParams& params)
 {
-   for(auto scf : itr.KS_basis())
+   for(auto csf : itr.KS_basis())
    {
-      real S = SCF_spin(itr.SCF_dets_sp(scf), itr.SCF_coeffs_sp(scf), params);
+      real S = CSF_spin(itr.CSF_dets_sp(csf), itr.CSF_coeffs_sp(csf), params);
 
-      if(!is_close(S, KS_spins[scf.config_idx], real(1e-6)))
+      if(!is_close(S, KS_spins[csf.config_idx], real(1e-6)))
       {
-         for(real c : itr.SCF_coeffs_sp(scf)) { ASSERT_NEAR(c, 0.0, 1e-6); }
+         for(real c : itr.CSF_coeffs_sp(csf)) { ASSERT_NEAR(c, 0.0, 1e-6); }
       }
    }
 }
@@ -271,23 +278,22 @@ TEST_P(HIntTest, test_Hint)
 
    const HubbardParams& params = GetParam();
 
-   for(auto scf1 : itr.KS_basis())
+   for(auto csf1 : itr.KS_basis())
    {
-      for(auto scf2 : itr.KS_basis())
+      for(auto csf2 : itr.KS_basis())
       {
-         real H_KS_rc = cdev.H_int_element(itr.SCF_dets(scf1), itr.SCF_coeffs(scf1), itr.SCF_size(scf1), 
-                                           itr.SCF_dets(scf2), itr.SCF_coeffs(scf2), itr.SCF_size(scf2),
+         real H_KS_rc = cdev.H_int_element(itr.CSF_dets(csf1), itr.CSF_coeffs(csf1), itr.CSF_size(csf1), 
+                                           itr.CSF_dets(csf2), itr.CSF_coeffs(csf2), itr.CSF_size(csf2),
                                            itr.params);
-         real H_KS_cr = cdev.H_int_element(itr.SCF_dets(scf2), itr.SCF_coeffs(scf2), itr.SCF_size(scf2), 
-                                           itr.SCF_dets(scf1), itr.SCF_coeffs(scf1), itr.SCF_size(scf1),
+         real H_KS_cr = cdev.H_int_element(itr.CSF_dets(csf2), itr.CSF_coeffs(csf2), itr.CSF_size(csf2), 
+                                           itr.CSF_dets(csf1), itr.CSF_coeffs(csf1), itr.CSF_size(csf1),
                                            itr.params);
 
          ASSERT_NEAR(H_KS_rc, H_KS_cr, real(1e-5));
-         ASSERT_LE(std::abs(H_KS_rc), (params.U/params.Ns)*params.Ns*params.Ns*params.Ns*itr.SCF_size(scf1)*itr.SCF_size(scf2));
+         ASSERT_LE(std::abs(H_KS_rc), (params.U/params.Ns)*params.Ns*params.Ns*params.Ns*itr.CSF_size(csf1)*itr.CSF_size(csf2));
       }
    }
 }
-
 
 TEST(SolverTest, test_dimer_E0)
 {
@@ -305,7 +311,8 @@ TEST(SolverTest, test_dimer_E0)
    for(const HubbardParams& p : params)
    {
       real ground_truth = dimer_E0(p, BCS::PERIODIC);
-      real result = KSM_basis_compute_E0(global_test_env->cdev, global_test_env->allocator, p);
+      // Create a new HubbardModel instance each time since params change and have to rebuild the basis anyways
+      real result = HubbardModel(p, global_test_env->cdev, global_test_env->allocator).E0();
 
       EXPECT_NEAR(result, ground_truth, TEST_E_TOL) << p;
    }
@@ -327,7 +334,7 @@ TEST(SolverTest, test_atomic_E0)
    for(const HubbardParams& p : params)
    {
       real ground_truth = atomic_E0(p);
-      real result = KSM_basis_compute_E0(global_test_env->cdev, global_test_env->allocator, p);
+      real result = HubbardModel(p, global_test_env->cdev, global_test_env->allocator).E0();
 
       EXPECT_NEAR(result, ground_truth, TEST_E_TOL) << p;
    }
@@ -348,7 +355,7 @@ TEST(SolverTest, test_noninteracting_E0)
    for(const HubbardParams& p : params)
    {
       real ground_truth = noninteracting_E0(p, BCS::PERIODIC);
-      real result = KSM_basis_compute_E0(global_test_env->cdev, global_test_env->allocator, p);
+      real result = HubbardModel(p, global_test_env->cdev, global_test_env->allocator).E0();
 
       EXPECT_NEAR(result, ground_truth, TEST_E_TOL) << p;
    }
@@ -398,3 +405,10 @@ TEST(QuadTest, test_quad)
       EXPECT_NEAR(result, ground_truth, real(1e-6));
    }
 }
+
+//int main(int argc, char **argv)
+//{
+//   testing::InitGoogleTest(&argc, argv);
+//   global_test_env = static_cast<HubbardEnvironment*>(::testing::AddGlobalTestEnvironment(new HubbardEnvironment));
+//   return RUN_ALL_TESTS();
+//}

@@ -1,4 +1,5 @@
 #include "hubbard.h"
+#include "compute.h"
 
 class HubbardComputeDevice::ComputeContext {};
 

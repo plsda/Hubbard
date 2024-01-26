@@ -110,17 +110,6 @@ int count_singles(Det det, const HubbardParams& params)
    return bitcount_lookup[det_up ^ det_down];
 }
 
-real compute_interaction_element(Det ket, const HubbardParams& params)
-{
-   real result = 0;
-   for(int s = 0; s < params.Ns; s++)
-   {
-      result += params.U*count_state(ket, s)*count_state(ket, params.Ns + s);
-   }
-
-   return result;
-}
-
 template <class T>
 Det statelist2det(const T& statelist)
 {
@@ -200,7 +189,8 @@ void list_spinless_determinants(std::vector<Det>& result, u32 N_particles, u32 N
    }
 }
 
-void list_determinants(std::vector<Det>& result, const HubbardParams& params)
+template<class A>
+void list_determinants(std::vector<Det, A>& result, const HubbardParams& params)
 {
     std::vector<Det> up_dets(choose(params.Ns, params.N_up));
     std::vector<Det> down_dets(choose(params.Ns, params.N_down));
@@ -269,10 +259,35 @@ int CSV_dim(real spin, int single_count)
    return result;
 }
 
+// The Weyl-Paldus formula
 int SM_space_dim(int N, int Ns, real S)
 {
-   // The Weyl-Paldus formula
-   return (2.0*S + 1)*choose(Ns + 1, 0.5*N - S)*(choose(Ns + 1, 0.5*N + S + 1)/(Ns + 1));
+   return (2.0*S + 1.0)*float(choose(Ns + 1, 0.5*N - S))*(float(choose(Ns + 1, 0.5*N + S + 1))/float(Ns + 1));
+}
+
+int dets_per_orbital_config(int config_single_count, const HubbardParams& params)
+{
+   assert(config_single_count <= ((params.N <= params.Ns) ? params.N : (2*params.Ns - params.N)));
+   int doubles = (params.N - config_single_count) >> 1;
+   int result = choose(config_single_count, params.N_down - doubles);
+
+   return result;
+}
+
+int config_count(const HubbardParams& params)
+{
+   int N_up = params.N_up;
+   int N_down = params.N_down;
+   int Ns = params.Ns;
+   int N = params.N;
+
+   int result = 0;
+   for(int N_dbl = 0; N_dbl <= std::min(N_up, N_down); N_dbl++)
+   {
+      result += choose(Ns, N_dbl)*choose(Ns - N_dbl, N - 2*N_dbl);
+   }
+
+   return result;
 }
 
 Det det_config_ID(Det det, const HubbardParams& params)
@@ -317,41 +332,50 @@ real kidx2k(int k, int Ns) // k = 1, 2, ..., Ns
 
 KBasis form_K_basis(const HubbardParams& params)
 {
-    int basis_size = params.basis_size();
-    std::vector<Det> basis(basis_size);
-    std::vector<int> momenta(basis_size);
-    std::vector<int> block_sizes(params.Ns);
+   int basis_size = params.basis_size();
+   std::vector<Det> basis(basis_size);
+   std::vector<int> momenta(basis_size);
+   std::vector<int> block_sizes(params.Ns);
 
-    list_determinants(basis, params);
+   form_K_basis(basis, momenta, block_sizes, params);
 
-    for(int basis_idx = 0; basis_idx < basis_size; basis_idx++) 
-    {
-        int K = state_momentum(basis[basis_idx], params);
-        momenta[basis_idx] = K;
-        block_sizes[K]++;
-    }
-
-    sort_multiple(momenta, basis);
-
-    return {basis, momenta, block_sizes};
+   return {basis, momenta, block_sizes};
 }
-
-int dets_per_orbital_config(int config_single_count, const HubbardParams& params)
+template<class A1, class A2>
+void form_K_basis(std::vector<Det, A1>& basis, std::vector<int, A2>& block_sizes,
+                  const HubbardParams& params)
 {
-   assert(config_single_count <= ((params.N <= params.Ns) ? params.N : (2*params.Ns - params.N)));
-   int doubles = (params.N - config_single_count) >> 1;
-   int result = choose(config_single_count, params.N_down - doubles);
+   std::vector<int> momenta(params.basis_size());
+   form_K_basis(basis, momenta, block_sizes, params);
+}
+template<class A1, class A2>
+void form_K_basis(std::vector<Det, A1>& basis, std::vector<int>& momenta, std::vector<int, A2>& block_sizes,
+                  const HubbardParams& params)
+{
+   int basis_size = params.basis_size();
+   list_determinants(basis, params);
 
-   return result;
+   for(int basis_idx = 0; basis_idx < basis_size; basis_idx++) 
+   {
+      int K = state_momentum(basis[basis_idx], params);
+      momenta[basis_idx] = K;
+      block_sizes[K]++;
+   }
+
+   sort_multiple(momenta, basis);
 }
 
-// Sort the determinant basis returned by form_K_basis by orbital configuration within each K-block
+// Sort the determinant basis returned by form_K_basis K-block-wise by orbital configuration
 void sort_K_basis(KBasis& kbasis, const HubbardParams& params)
 {
    std::vector<Det>& basis = kbasis.basis;
-
+   sort_K_basis(basis, kbasis.block_sizes, params);
+}
+template<class A1, class A2>
+void sort_K_basis(std::vector<Det, A1>& basis, const std::vector<int, A2>& block_sizes, const HubbardParams& params)
+{
    int i0 = 0;
-   for(int block_size : kbasis.block_sizes)
+   for(int block_size : block_sizes)
    {
       int i1 = i0 + block_size;
       std::sort(basis.begin() + i0, basis.begin() + i1,
@@ -367,7 +391,7 @@ void sort_K_basis(KBasis& kbasis, const HubbardParams& params)
 }
 
 // Naive path search
-void form_S_paths(Det path, int cur_s, real cur_f, int s, real f, std::vector<Det>& result)
+void form_S_paths(Det path, int cur_s, real cur_f, int s, real f, std::vector<Det, DetArena>& result)
 {
    assert((cur_s >= 0) && (s >= 0));
 
@@ -440,7 +464,7 @@ int get_path_edge(Det path, size_t idx)
    return edge;
 }
 
-real compute_SCF_overlap(Det S_path, Det M_path, int edge_count, real f, real m)
+real compute_CSF_overlap(Det S_path, Det M_path, int edge_count, real f, real m)
 {
    assert(edge_count >= 0);
 
@@ -493,7 +517,7 @@ real compute_SCF_overlap(Det S_path, Det M_path, int edge_count, real f, real m)
    return overlap;
 }
 
-real SCF_spin(const std::span<Det>& dets, const std::span<real>& coeffs, const HubbardParams& params)
+real CSF_spin(const std::span<Det>& dets, const std::span<real>& coeffs, const HubbardParams& params)
 {
    int Ns = params.Ns;
    real m = 0.5*(params.N_up - params.N_down);
@@ -533,7 +557,7 @@ real SCF_spin(const std::span<Det>& dets, const std::span<real>& coeffs, const H
    return result;
 }
 
-real SCF_inner(const std::span<Det>& bra_dets, const std::span<real>& bra_coeffs, 
+real CSF_inner(const std::span<Det>& bra_dets, const std::span<real>& bra_coeffs, 
                const std::span<Det>& ket_dets, const std::span<real>& ket_coeffs)
 {
    real result = 0;
