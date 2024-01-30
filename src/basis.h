@@ -93,6 +93,7 @@ SDet sadd(u32 state_idx, SDet det);
 SDet ssub(u32 state_idx, Det det, int sign = 1);
 SDet ssub(u32 state_idx, SDet det);
 
+bool is_halffilling(const HubbardParams& params);
 std::pair<Det, Det> get_det_up_down(Det det, HubbardParams params);
 int count_singles(Det det, const HubbardParams& params);
 template <class T> Det statelist2det(const T& statelist);

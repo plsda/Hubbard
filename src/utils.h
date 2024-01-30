@@ -134,6 +134,21 @@ struct IntArgs
 template <class... Arrays>
 void sort_multiple(Arrays&... arrays);
 
+template <class T, size_t count, size_t... Ints, class... Args>
+constexpr std::initializer_list<T> make_cinit_list(std::index_sequence<Ints...>, Args&&... args);
+template <class T, size_t count, class... Args>
+constexpr std::initializer_list<T> make_cinit_list(Args&&... args);
+
+template <class T, size_t count, size_t... Ints, class... Args>
+constexpr std::array<T, count> make_carray(std::index_sequence<Ints...>, Args&&... args);
+template <class T, size_t count, class... Args>
+constexpr std::array<T, count> make_carray(Args&&... args);
+
+template <class T, size_t count, size_t... Ints, class... Args>
+constexpr std::array<T, count> make_enumerated_carray(std::index_sequence<Ints...>, Args&&... args);
+template <class T, size_t count, class... Args>
+constexpr std::array<T, count> make_enumerated_carray(Args&&... args);
+
 template <class T>
 T pop_vec(std::vector<T>& vec, int i);
 

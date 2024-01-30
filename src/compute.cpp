@@ -1,4 +1,10 @@
-#include "hubbard.h"
+#include <span>
+
+#include "common.h"
+#include "allocator.h"
+#include "utils.h"
+#include "basis.h"
+
 #include "compute.h"
 
 class HubbardComputeDevice::ComputeContext {};
@@ -8,8 +14,8 @@ HubbardComputeDevice::HubbardComputeDevice(std::stringstream* const errors = 0) 
 HubbardComputeDevice::~HubbardComputeDevice() {}
 
 real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
-                                           const Det* const ket_dets, const real* const ket_coeffs, int ket_count,
-                                           const HubbardParams& params)
+                                         const Det* const ket_dets, const real* const ket_coeffs, int ket_count,
+                                         const HubbardParams& params)
 {
    assert(bra_count > 0 && ket_count > 0);
 

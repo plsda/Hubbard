@@ -300,56 +300,6 @@ public:
       recompute_E = true;
       params.T = new_T;
    }
-   // TODO: Remove these and always create a new HubbardModel instance when need to change these params? (need to form the basis etc. from scratch anyways)
-   /*
-   void Ns(int new_Ns) 
-   { 
-      recompute_E = true;
-      recompute_basis = true;
-      params.Ns = new_Ns;
-   }
-   void N_up(int new_N_up) 
-   { 
-      recompute_E = true;
-      recompute_basis = true;
-      params.N_up = new_N_up;
-      params.N = params.N_up + params.N_down;
-   }
-   void N_dn(int new_N_down)
-   { 
-      recompute_E = true;
-      recompute_basis = true;
-      params.N_down = new_N_down;
-      params.N = params.N_up + params.N_down;
-   }
-   HubbardModel& set_params(const HubbardParams& new_params)
-   { 
-      recompute_E = true;
-      recompute_basis = true;
-      params = new_params;
-      return *this;
-   }
-   void update()
-   {
-      if(recompute_basis)
-      {
-         HubbardSizes new_sz = hubbard_memory_requirements(params);
-         //if(sz.unaligned_workspace_size < new_sz.unaligned_workspace_size)
-         //{
-         //   allocator = ArenaAllocator(new_sz.unaligned_workspace_size); // TODO: Sus. Add padding to unaligned size + think if reassignment is a good idea. 
-         //                                                                //       Check if old arena has enough space. Prob shouldn't be creating new arenas here
-         //   sz = new_sz;
-         //}
-         sz = new_sz;
-         assert(allocator.unused_size() >= new_sz.workspace_size);
-
-         //KSBlockIterator asd(params, allocator, new_sz);
-         //itr = asd;
-         itr = KSBlockIterator(params, allocator, new_sz);
-         recompute_basis = false;
-      }
-   }
-   */
 
    real H_int(const CSFItr& csf1, const CSFItr& csf2);
    real H_0(Det det);

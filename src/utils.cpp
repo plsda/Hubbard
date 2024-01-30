@@ -23,6 +23,42 @@ void sort_multiple(Arrays&... arrays)
    }
 }
 
+template <class T, size_t count, size_t... Ints, class... Args>
+constexpr std::initializer_list<T> make_cinit_list(std::index_sequence<Ints...>, Args&&... args)
+{
+   return std::initializer_list<T>{(Ints, T(args...))...};
+}
+
+template <class T, size_t count, class... Args>
+constexpr std::initializer_list<T> make_cinit_list(Args&&... args)
+{
+   return make_cinit_list<T, count>(std::make_index_sequence<count>{}, std::forward<Args>(args)...);
+}
+
+template <class T, size_t count, size_t... Ints, class... Args>
+constexpr std::array<T, count> make_carray(std::index_sequence<Ints...>, Args&&... args)
+{
+   return std::array<T, count>{(Ints, T(args...))...};
+}
+
+template <class T, size_t count, class... Args>
+constexpr std::array<T, count> make_carray(Args&&... args)
+{
+   return make_carray<T, count>(std::make_index_sequence<count>{}, std::forward<Args>(args)...);
+}
+
+template <class T, size_t count, size_t... Ints, class... Args>
+constexpr std::array<T, count> make_enumerated_carray(std::index_sequence<Ints...>, Args&&... args)
+{
+   return std::array<T, count>{T(args..., Ints)...};
+}
+
+template <class T, size_t count, class... Args>
+constexpr std::array<T, count> make_enumerated_carray(Args&&... args)
+{
+   return make_enumerated_carray<T, count>(std::make_index_sequence<count>{}, std::forward<Args>(args)...);
+}
+
 template <class T>
 T pop_vec(std::vector<T>& vec, int i)
 {

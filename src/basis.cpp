@@ -97,6 +97,11 @@ SDet ssub(u32 state_idx, SDet det)
    return ssub(state_idx, det.det, det.sign);
 }
 
+bool is_halffilling(const HubbardParams& params)
+{
+   return ((params.Ns == 2*params.N_up) && (params.Ns == 2*params.N_down));
+}
+
 std::pair<Det, Det> get_det_up_down(Det det, HubbardParams params)
 {
    Det det_up = det & ((2 << (params.Ns - 1)) - 1);
@@ -381,7 +386,7 @@ void sort_K_basis(std::vector<Det, A1>& basis, const std::vector<int, A2>& block
       std::sort(basis.begin() + i0, basis.begin() + i1,
                 [&params](Det d1, Det d2){ return det_config_ID(d1, params) < det_config_ID(d2, params); }
                 );
-      // NOTE: To also sort by number of singles (for S-path caching); another option is to sort the KS_configs array after callin form_KS_subbasis (less elements to sort but multiple arrays)
+      // NOTE: To also sort by number of singles (for S-path caching); an alternative is to sort the KS_configs array after calling form_KS_subbasis (less elements to sort but multiple arrays)
       //std::stable_sort(basis.begin() + i0, basis.begin() + i1,
       //                 [&params](Det d1, Det d2){ return count_singles(d1, params) < count_singles(d2, params); }
       //                 );
