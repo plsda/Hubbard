@@ -257,7 +257,6 @@ int CSV_dim(real spin, int single_count)
       (single_count >= 2*spin))
    {
       result = (2.0*spin + 1.0)/(single_count + 1.0)*choose(single_count + 1, 0.5*single_count - spin);
-
       assert(is_close(int(result), result));
    }
 
@@ -357,6 +356,8 @@ template<class A1, class A2>
 void form_K_basis(std::vector<Det, A1>& basis, std::vector<int>& momenta, std::vector<int, A2>& block_sizes,
                   const HubbardParams& params)
 {
+   TIME_SCOPE("form_K_basis");
+
    int basis_size = params.basis_size();
    list_determinants(basis, params);
 
@@ -379,6 +380,8 @@ void sort_K_basis(KBasis& kbasis, const HubbardParams& params)
 template<class A1, class A2>
 void sort_K_basis(std::vector<Det, A1>& basis, const std::vector<int, A2>& block_sizes, const HubbardParams& params)
 {
+   TIME_SCOPE("sort_K_basis");
+
    int i0 = 0;
    for(int block_size : block_sizes)
    {

@@ -4,14 +4,16 @@
 #include "allocator.h"
 #include "utils.h"
 #include "basis.h"
-
 #include "compute.h"
+#include "solver.h"
 
 class HubbardComputeDevice::ComputeContext {};
 
-HubbardComputeDevice::HubbardComputeDevice(std::stringstream* const errors = 0) : errors(errors) {}
+HubbardComputeDevice:: HubbardComputeDevice(ErrorStream* _errors) : errors(_errors) {}
 
 HubbardComputeDevice::~HubbardComputeDevice() {}
+
+void HubbardComputeDevice::reset() {}
 
 real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
                                          const Det* const ket_dets, const real* const ket_coeffs, int ket_count,

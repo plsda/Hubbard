@@ -137,9 +137,10 @@ cpt(_allocator, sz.workspace_size),
    reset();
 }
 
-
 void KSBlockIterator::form_KS_subbasis()
 {
+   TIME_SCOPE("form_KS_subbasis");
+
    KS_max_path_count = 0;
 
    int cidx = 0;
@@ -194,6 +195,8 @@ void KSBlockIterator::form_KS_subbasis()
 
 void KSBlockIterator::form_CSFs()
 {
+   TIME_SCOPE("form_CSFs");
+
    int cidx = 0;
    int prev_s_k = -1;
    for(auto config : KS_configs)
@@ -353,11 +356,11 @@ real noninteracting_E(int n, real T, int Ns, BCS bcs) // n = 1, 2, ..., Ns
 {
    if(bcs == BCS::OPEN)
    {
-      return -2.0*T*std::cos(PI*n/(Ns + 1.0));
+      return -2.0*T*std::cos(PI*real(n)/real(Ns + 1.0));
    }
    else if(bcs == BCS::PERIODIC)
    {
-      return -2.0*T*std::cos(2.0*PI*n/Ns);
+      return -2.0*T*std::cos(2.0*PI*real(n)/real(Ns));
    }
 
    assert(!"Supplied BCS not supported (noninteracting_E)!");
@@ -366,7 +369,7 @@ real noninteracting_E(int n, real T, int Ns, BCS bcs) // n = 1, 2, ..., Ns
 
 real noninteracting_E0(const HubbardParams& params, BCS bcs)
 {
-   int T = params.T;
+   real T = params.T;
    int Ns = params.Ns;
    int N_up = params.N_up;
    int N_down = params.N_down;
@@ -490,7 +493,7 @@ real HubbardModel::H_0(Det det)
 real HubbardModel::E0()
 {
    if(!recompute_E) { return _E0; }
-   //update();
+   update();
 
    real min_E = std::numeric_limits<real>::max();
 
@@ -498,6 +501,7 @@ real HubbardModel::E0()
    {
       if(itr.KS_dim == 0) { continue; }
 
+      {TIME_SCOPE("Matrix");
       // H_int
       for(auto csf1 : itr.KS_basis())
       {
@@ -521,6 +525,7 @@ real HubbardModel::E0()
          itr.KS_H().matrix().diagonal()(Eigen::seqN(col_idx, state_count)).array() += H_0(det);
          col_idx += state_count;
       }
+      }
 
       real E0;
       if(itr.KS_dim == 1)
@@ -529,6 +534,7 @@ real HubbardModel::E0()
       }
       else
       {
+         TIME_SCOPE("Diag")
          E0 = cdev.sym_eigs_smallest(itr.KS_H().data(), itr.KS_dim);
       }
 
@@ -560,12 +566,12 @@ HubbardSizes hubbard_memory_requirements(HubbardParams params)
    int min_singles = int(2.0*std::abs(params.m));
    int max_singles = (params.N <= params.Ns) ? params.N : (2*params.Ns - params.N);
 
-   real A = 0.25*max_singles;
-   real max_csv_S = 0;
-   if(A <= S_min)      { max_csv_S = S_min; }
-   else if(A >= S_max) { max_csv_S = S_max; }
-   else                { max_csv_S = S_min + int(A - S_min); }
+   real max_csv_S = S_min;
    int max_S_paths = ((max_csv_S == 0) && (max_singles == 0)) ? 1 : CSV_dim(max_csv_S, max_singles);
+   while(++max_csv_S <= S_max && max_S_paths < CSV_dim(max_csv_S, max_singles)) 
+   {
+      max_S_paths = CSV_dim(max_csv_S, max_singles);
+   }
 
    int max_dets_in_config = 0;
    for(int single_count = min_singles; single_count <= max_singles; single_count += 2)
@@ -607,4 +613,9 @@ HubbardSizes hubbard_memory_requirements(HubbardParams params)
    };
 
    return result;
+}
+
+Det get_config_ref_det(const std::span<Det>& config)
+{ 
+   return config.front();
 }

@@ -28,6 +28,7 @@ private:
    static u8 _sentinel[];
 };
 
+// NOTE: ArenaAllocator is not thread-safe
 class ArenaAllocator
 {
 public:

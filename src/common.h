@@ -17,6 +17,9 @@
 #define STD_POLICY_UNSEQ std::execution::par_unseq,
 
 #define MAX_SITE_COUNT 16
+#ifdef EIGEN_WORLD_VERSION
+#define _EIGEN 
+#endif
 
 using u8 = uint8_t;
 using u32 = uint32_t;
@@ -28,7 +31,7 @@ using idxt = std::ptrdiff_t;
 using Det = uint32_t; // NOTE: Always unsigned
 using HDet = uint16_t;
 
-typedef std::array<u8, 65536> Lookup16;
+using Lookup16 = std::array<u8, 65536>;
 
 inline constexpr Lookup16 gen_bitcount_lookup16()
 {

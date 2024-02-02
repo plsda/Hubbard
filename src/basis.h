@@ -25,7 +25,8 @@ struct HubbardParams
 
    HubbardParams() = default;
 
-   explicit HubbardParams(real T, real U, int Ns, int N_up, int N_down) :
+   HubbardParams(real T, real U, int Ns, int N_up, int N_down) :
+   //explicit HubbardParams(real T, real U, int Ns, int N_up, int N_down) :
       T(T), U(U), Ns(Ns), N(N_up + N_down), N_up(N_up), N_down(N_down), m(0.5*(N_up - N_down))
    {
       assert(Ns > 0 && N > 0 && N_up >= 0 && N_down >= 0 &&
@@ -43,6 +44,20 @@ struct HubbardParams
    int S_count() const { return (S_max() - S_min()) + 1; }
    int K_count() const { return Ns; }
    int KS_block_count() const { return S_count()*K_count(); }
+
+   bool operator==(const HubbardParams& other)
+   { 
+      return 
+         (T     == other.T) &&
+         (U     == other.U) &&
+         (Ns    == other.Ns) &&
+         (N     == other.N) &&
+         (N_up  == other.N_up) &&
+         (N_down== other.N_down) &&
+         (m     == other.m);
+   }
+   bool operator!=(const HubbardParams& other) { return !(*this == other); }
+
 };
 
 struct StructuralHubbardParams : public HubbardParams

@@ -67,7 +67,6 @@ public:
       d_workspace   = (void*)(((u8*)d_memory) + sizeof(real) + sizeof(int));
 
       h_workspace = std::make_unique<u8[]>(host_workspace_init_size);
-      //h_workspace = std::make_shared<u8[]>(host_workspace_init_size);
 
       device_workspace_size = device_workspace_init_size;
       host_workspace_size = host_workspace_init_size;
@@ -137,7 +136,20 @@ HubbardComputeDevice::HubbardComputeDevice(ErrorStream* errors) : errors(errors)
 
 HubbardComputeDevice::~HubbardComputeDevice()
 {
+   //cudaDeviceReset();
+}
 
+void HubbardComputeDevice::reset()
+{ 
+   cudaDeviceReset();
+
+   if(errors) { errors->reset(); }
+
+   size_t device_workspace_init_size = 100*1024*1024;
+   size_t host_workspace_init_size = 100*1024*1024;
+   ctx.reset(new ComputeContext(device_workspace_init_size, host_workspace_init_size, errors));
+
+   CHECK_NO_CUDA_ERRORS;
 }
 
 __device__
@@ -225,7 +237,6 @@ static Det det_config_ID(Det det, const HubbardParams& params)
    return result;
 }
 
-
 __device__
 static bool cmp_det_config(Det det1, Det det2, HubbardParams params)
 {
@@ -268,8 +279,8 @@ void H_int_element_term(const Det* const __restrict__ bra_dets, const real* cons
 }
 
 real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
-                                           const Det* const ket_dets, const real* const ket_coeffs, int ket_count,
-                                           const HubbardParams& params)
+                                         const Det* const ket_dets, const real* const ket_coeffs, int ket_count,
+                                         const HubbardParams& params)
 {
    assert(bra_count > 0 && ket_count > 0);
 
@@ -297,11 +308,13 @@ real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* 
       Det*  d_ket_dets;
       real* d_ket_coeffs;
 
+      // TODO: Preallocate (one allocation)
       cudaMalloc(&d_bra_dets,   sizeof(Det)*bra_count);
       cudaMalloc(&d_bra_coeffs, sizeof(real)*bra_count);
       cudaMalloc(&d_ket_dets,   sizeof(Det)*ket_count);
       cudaMalloc(&d_ket_coeffs, sizeof(real)*ket_count);
 
+      // TODO: Store dets and coeffs interleaved in a single array
       cuda_memcpy_to_device(d_bra_dets,   bra_dets,    sizeof(Det)*bra_count);
       cuda_memcpy_to_device(d_bra_coeffs, bra_coeffs,  sizeof(real)*bra_count);
       cuda_memcpy_to_device(d_ket_dets,   ket_dets,    sizeof(Det)*ket_count);
@@ -315,6 +328,7 @@ real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* 
       H_int_element_term<<<block_count, threads_per_block>>>(d_bra_dets, d_bra_coeffs,
                                                              d_ket_dets, d_ket_coeffs,
                                                              bra_count, params, d_result);
+
       cuda_memcpy_to_host(&result, d_result, sizeof(result));
       cudaFree(d_result);
       result *= params.U/params.Ns;
@@ -325,7 +339,6 @@ real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* 
       cudaFree(d_ket_coeffs);
 
       CHECK_NO_CUDA_ERRORS;
-
    }
 
    return result;

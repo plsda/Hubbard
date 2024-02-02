@@ -55,7 +55,7 @@ real dimer_E0(const HubbardParams& params, BCS bcs);
 real atomic_E0(const HubbardParams& params);
 real halffilled_E_per_N(real T, real U, IntArgs int_args);
 HubbardSizes hubbard_memory_requirements(HubbardParams params);
-Det get_config_ref_det(const std::span<Det>& config) { return config.front(); }
+Det get_config_ref_det(const std::span<Det>& config);
 
 struct HubbardSizes
 {
@@ -151,6 +151,11 @@ public:
    KSBlockIterator(ArenaAllocator& _allocator);
    KSBlockIterator(HubbardParams _params, ArenaAllocator& _allocator, HubbardSizes sz);
 
+   ~KSBlockIterator()
+   {
+
+   }
+
    KSBlockIterator& operator++();
    operator bool() const { return has_blocks_left; }
    void reset();
@@ -228,9 +233,9 @@ public:
 
       KS_dim += other.KS_dim;
    }
-   void move_basis(KSBlockIterator& other)
+   void copy_basis(KSBlockIterator& other)
    {
-      basis = std::move(other.basis);
+      basis = other.basis;
    }
    std::vector<real, RealArena> KS_spins;
 #endif
@@ -299,6 +304,48 @@ public:
    { 
       recompute_E = true;
       params.T = new_T;
+   }
+
+   void Ns(int new_Ns) 
+   { 
+      recompute_E = true;
+      recompute_basis = true;
+      params.Ns = new_Ns;
+   }
+   void N_up(int new_N_up) 
+   { 
+      recompute_E = true;
+      recompute_basis = true;
+      params.N_up = new_N_up;
+      params.N = params.N_up + params.N_down;
+   }
+   void N_dn(int new_N_down)
+   { 
+      recompute_E = true;
+      recompute_basis = true;
+      params.N_down = new_N_down;
+      params.N = params.N_up + params.N_down;
+   }
+   HubbardModel& set_params(const HubbardParams& new_params)
+   { 
+      recompute_E = true;
+      recompute_basis = true;
+      params = new_params;
+      return *this;
+   }
+   void update()
+   {
+      if(recompute_basis)
+      {
+         HubbardSizes new_sz = hubbard_memory_requirements(params);
+         // TODO: Implement reallocate() for ArenaAllocator and use it here if the current params require more memory
+         sz = new_sz;
+         assert(allocator.unused_size() >= new_sz.workspace_size);
+
+         itr.~KSBlockIterator();
+         new (&itr) KSBlockIterator(params, allocator, new_sz);
+         recompute_basis = false;
+      }
    }
 
    real H_int(const CSFItr& csf1, const CSFItr& csf2);

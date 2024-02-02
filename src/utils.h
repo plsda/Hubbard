@@ -1,6 +1,7 @@
 #ifndef UTILS_H
 
 #define EXPAND(...) __VA_ARGS__
+#define ARRAY_SIZE(array) (sizeof(array)/sizeof((array)[0]))
 
 template <class T>
 class RangeItr

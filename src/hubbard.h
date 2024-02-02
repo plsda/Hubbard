@@ -12,6 +12,9 @@
 #include <chrono>
 #include <concepts>
 #include <variant>
+#include <utility> 
+#include <string_view>
+#include <unordered_map>
 using namespace std::chrono_literals;
 
 #ifdef _WIN32
@@ -33,6 +36,7 @@ using namespace std::chrono_literals;
 #include "basis.h"
 #include "compute.h"
 #include "solver.h"
+#include "profiler.h"
 #include "ui.h"
 
 #define HUBBARD_H
