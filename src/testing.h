@@ -10,9 +10,10 @@
 #include "basis.h"
 #include "compute.h"
 #include "solver.h"
+#include "profiler.h"
 
 #define TEST_E_TOL real(1e-4)
-const size_t TEST_ARENA_SIZE = 100*1024*1024;
+const size_t TEST_ARENA_SIZE = 150*1024*1024;
 
 class HubbardEnvironment : public ::testing::Environment
 {
@@ -41,8 +42,6 @@ public:
    static inline const HubbardParams params = P;
 
 protected:
-//   static inline ArenaAllocator allocator = ArenaAllocator(TEST_ARENA_SIZE);
-//   static inline KSBlockIterator itr = KSBlockIterator(P, allocator, P.KS_block_count()*hubbard_memory_requirements(P));
    static inline KSBlockIterator itr = KSBlockIterator(P, global_test_env->allocator, P.KS_block_count()*hubbard_memory_requirements(P));
 };
 
@@ -51,8 +50,6 @@ class KBasisTest : public testing::TestWithParam<HubbardParams> {};
 class HIntTest : public testing::TestWithParam<HubbardParams>
 {
 public:
-//   static inline ArenaAllocator allocator = ArenaAllocator(TEST_ARENA_SIZE);
-//   HIntTest() : itr(GetParam(), allocator, GetParam().KS_block_count()*hubbard_memory_requirements(GetParam())) {}
    HIntTest() : itr(GetParam(), global_test_env->allocator, GetParam().KS_block_count()*hubbard_memory_requirements(GetParam())) {}
 
 protected:

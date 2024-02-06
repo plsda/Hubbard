@@ -151,11 +151,6 @@ public:
    KSBlockIterator(ArenaAllocator& _allocator);
    KSBlockIterator(HubbardParams _params, ArenaAllocator& _allocator, HubbardSizes sz);
 
-   ~KSBlockIterator()
-   {
-
-   }
-
    KSBlockIterator& operator++();
    operator bool() const { return has_blocks_left; }
    void reset();
@@ -288,65 +283,16 @@ private:
 class HubbardModel
 {
 public:
-   HubbardModel(HubbardComputeDevice& _cdev, ArenaAllocator& _allocator) :
-      sz({}), allocator(_allocator), cdev(_cdev), itr(allocator), recompute_E(true), recompute_basis(false) { }
+   HubbardModel(HubbardComputeDevice& _cdev, ArenaAllocator& _allocator);
+   HubbardModel(const HubbardParams& _params, HubbardComputeDevice& _cdev, ArenaAllocator& _allocator);
 
-   HubbardModel(const HubbardParams& _params, HubbardComputeDevice& _cdev, ArenaAllocator& _allocator) :
-      params(_params), sz(hubbard_memory_requirements(_params)), cdev(_cdev), allocator(_allocator),
-      itr(params, allocator, sz), recompute_E(true), recompute_basis(false) { }
-
-   void U(real new_U)
-   { 
-      recompute_E = true;
-      params.U = new_U; 
-   }
-   void T(real new_T) 
-   { 
-      recompute_E = true;
-      params.T = new_T;
-   }
-
-   void Ns(int new_Ns) 
-   { 
-      recompute_E = true;
-      recompute_basis = true;
-      params.Ns = new_Ns;
-   }
-   void N_up(int new_N_up) 
-   { 
-      recompute_E = true;
-      recompute_basis = true;
-      params.N_up = new_N_up;
-      params.N = params.N_up + params.N_down;
-   }
-   void N_dn(int new_N_down)
-   { 
-      recompute_E = true;
-      recompute_basis = true;
-      params.N_down = new_N_down;
-      params.N = params.N_up + params.N_down;
-   }
-   HubbardModel& set_params(const HubbardParams& new_params)
-   { 
-      recompute_E = true;
-      recompute_basis = true;
-      params = new_params;
-      return *this;
-   }
-   void update()
-   {
-      if(recompute_basis)
-      {
-         HubbardSizes new_sz = hubbard_memory_requirements(params);
-         // TODO: Implement reallocate() for ArenaAllocator and use it here if the current params require more memory
-         sz = new_sz;
-         assert(allocator.unused_size() >= new_sz.workspace_size);
-
-         itr.~KSBlockIterator();
-         new (&itr) KSBlockIterator(params, allocator, new_sz);
-         recompute_basis = false;
-      }
-   }
+   HubbardModel& U(real new_U);
+   HubbardModel& T(real new_T);
+   void Ns(int new_Ns);
+   void N_up(int new_N_up);
+   void N_dn(int new_N_down);
+   HubbardModel& set_params(const HubbardParams& new_params);
+   void update();
 
    real H_int(const CSFItr& csf1, const CSFItr& csf2);
    real H_0(Det det);

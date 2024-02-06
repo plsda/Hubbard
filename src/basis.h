@@ -57,7 +57,6 @@ struct HubbardParams
          (m     == other.m);
    }
    bool operator!=(const HubbardParams& other) { return !(*this == other); }
-
 };
 
 struct StructuralHubbardParams : public HubbardParams

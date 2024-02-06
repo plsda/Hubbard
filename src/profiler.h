@@ -3,7 +3,7 @@
 /* A simple, but intrusive, profiling system */
 
 using timept = std::chrono::time_point<std::chrono::steady_clock>;
-using timedt = std::chrono::duration<double>;//, period>;
+using timedt = std::chrono::duration<double>;
 using time_ms = std::chrono::milliseconds;
 using time_s = std::chrono::seconds;
 using record_idx_type = u8;
@@ -15,10 +15,10 @@ struct ProfilingStats
    void accumulate(timedt pt);
    float mean() const { return total/float(count); }
 
-   float min;
-   float max;
-   float total;
-   int count;
+   float min = std::numeric_limits<float>::max();
+   float max = 0;
+   float total = 0;
+   int count = 0;
 };
 
 class TimedScope

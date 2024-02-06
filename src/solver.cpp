@@ -472,6 +472,107 @@ real halffilled_E_per_N(real T, real U, IntArgs int_args)
    return -4.0*T*integ;
 }
 
+real halffilled_E_per_N(const HubbardParams& params, const IntArgs& int_args)
+{
+   return halffilled_E_per_N(params.T, params.U, int_args);
+}
+
+real halffilled_E(const HubbardParams& params, IntArgs int_args)
+{
+   double T = params.T;
+   double U = params.U;
+   int Ns = params.Ns;
+   double y = -U/(4.0*T);
+
+   auto integrand = [y](double x) 
+   {
+      double J0 = std::cyl_bessel_j(0, x);
+      double J1 = std::cyl_bessel_j(1, x);
+
+      double exp_arg = -2.0*y*x;
+      int intpart = int(exp_arg);
+      double ipow = (intpart >= 0) ? 1.0/(1 << intpart) : (1 << std::abs(intpart));
+      return J0*J1*ipow/(x*(ipow + std::exp(exp_arg - intpart*LOG2)));
+   };
+
+   double integ = quad(integrand, int_args);
+
+   return -4.0*Ns*T*integ;
+}
+
+
+HubbardModel::HubbardModel(HubbardComputeDevice& _cdev, ArenaAllocator& _allocator) :
+   sz({}), allocator(_allocator), cdev(_cdev), itr(allocator), recompute_E(true), recompute_basis(false) { }
+
+HubbardModel::HubbardModel(const HubbardParams& _params, HubbardComputeDevice& _cdev, ArenaAllocator& _allocator) :
+   params(_params), sz(hubbard_memory_requirements(_params)), cdev(_cdev), allocator(_allocator),
+   itr(params, allocator, sz), recompute_E(true), recompute_basis(false) { }
+
+HubbardModel& HubbardModel::U(real new_U)
+{ 
+   recompute_E = true;
+   params.U = new_U; 
+   return *this;
+}
+
+HubbardModel& HubbardModel::T(real new_T) 
+{ 
+   recompute_E = true;
+   params.T = new_T;
+   return *this;
+}
+
+void HubbardModel::Ns(int new_Ns) 
+{ 
+   recompute_E = true;
+   recompute_basis = true;
+   params.Ns = new_Ns;
+}
+
+void HubbardModel::N_up(int new_N_up) 
+{ 
+   recompute_E = true;
+   recompute_basis = true;
+   params.N_up = new_N_up;
+   params.N = params.N_up + params.N_down;
+}
+
+void HubbardModel::N_dn(int new_N_down)
+{ 
+   recompute_E = true;
+   recompute_basis = true;
+   params.N_down = new_N_down;
+   params.N = params.N_up + params.N_down;
+}
+
+HubbardModel& HubbardModel::set_params(const HubbardParams& new_params)
+{ 
+   recompute_E = true;
+   recompute_basis = recompute_basis || (params.Ns != new_params.Ns) || (params.N_up != new_params.N_up) || (params.N_down != new_params.N_down);
+   params = new_params;
+   return *this;
+}
+
+void HubbardModel::update()
+{
+   if(recompute_basis)
+   {
+      HubbardSizes new_sz = hubbard_memory_requirements(params);
+      // TODO: Implement reallocate() for ArenaAllocator and use it here if the current params require more memory
+      sz = new_sz;
+      assert(allocator.unused_size() >= new_sz.workspace_size);
+
+      itr.~KSBlockIterator();
+      new (&itr) KSBlockIterator(params, allocator, new_sz);
+      recompute_basis = false;
+   }
+   else
+   {
+      itr.params.T = params.T;
+      itr.params.U = params.U;
+   }
+}
+
 real HubbardModel::H_int(const CSFItr& csf1, const CSFItr& csf2)
 {
    return cdev.H_int_element(itr.CSF_dets(csf1), itr.CSF_coeffs(csf1), itr.CSF_size(csf1), 

@@ -14,14 +14,31 @@
    #endif
 #endif
 
-template <class T> struct ScalarRange;
 struct ProgramState;
 struct Task;
 struct TaskFuture;
 template<size_t thread_count = 4> class WorkQueue;
+struct PlotElement;
 class ProgramState;
 
-using TaskResult = std::variant<bool, int, real, void*>;
+using TaskResult = std::variant<std::monostate, bool, int, real, void*, std::vector<real>::iterator>;
+
+enum class PLOT_QUANTITY
+{
+   COMPUTED_E,
+   DIMER_E,
+   NONINT_E,
+   ATOMIC_E,
+   HF_E,
+
+   COUNT
+};
+
+enum class PLOT_TYPE
+{
+   LINE,
+   SCATTER,
+};
 
 static void glfw_error_callback(int error, const char* description);
 static void glfw_framebuffer_size_callback(GLFWwindow *window, int width, int height);
@@ -84,6 +101,22 @@ struct TaskFuture
 
    bool is_valid() const { return future.valid(); }
    bool is_ready() const { return check_future(future); }
+   bool is_pending() const { return is_valid() && !is_ready(); }
+
+#if 0
+   TaskFuture& operator=(TaskFuture&& other)
+   {
+      if(is_valid())
+      {
+         future.get();
+      }
+      future = std::move(other.future);
+      task_ID = other.task_ID;
+
+      return *this;
+   }
+   TaskFuture& operator=(const TaskFuture& other) = delete;
+#endif
 
    int get_ID() const
    {
@@ -106,15 +139,29 @@ class WorkQueue
    static inline u32 task_counter = 1;
 
    template<size_t C>
-   friend void worker_proc(WorkQueue<C>* const q, const int worker_ID);
+   friend void worker_proc(std::stop_token s, WorkQueue<C>* const q, const int worker_ID);
 
 public:
    WorkQueue();
+   ~WorkQueue()
+   {
+      for(auto& w : workers)
+      {
+         w.request_stop();
+      }
+      for(auto& w : workers)
+      {
+         pending.release();
+      }
+   }
    
-   template <class... Args>
+   template<class... Args>
    TaskFuture push(std::invocable<Args...> auto f, Args&&... args);
 
-   template <class T, class... Args>
+   template<class... Args>
+   TaskFuture push_valcap(std::invocable<Args...> auto f, Args&&... args);
+
+   template<class T, class... Args>
    TaskFuture push(T& t, auto (T::*f)(Args...), Args&&... args);
 
    TaskFuture push(Task& task);
@@ -136,11 +183,25 @@ private:
    //std::jthread gen_worker(int ID) { return std::jthread(worker_proc, ID, this); }
 };
 
-class ProgramState
+struct PlotElement
 {
-public:
-   ProgramState(const char* window_name, int window_w, int window_h, ArenaAllocator& _allocator,
-                HubbardComputeDevice& _cdev, ErrorStream& errors, ImVec4 _clear_color = ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+   PLOT_QUANTITY value_type;
+   PLOT_TYPE type;
+   const char* legend;
+   bool show;
+   bool enabled;
+   ImPlotMarker marker_style;
+   const std::vector<float>* x;
+   std::vector<float> y;
+   TaskFuture comp_status;
+};
+
+static const std::vector<float> ZERO_FVEC = {0};
+
+struct ProgramState
+{
+   explicit ProgramState(const char* window_name, int window_w, int window_h, ArenaAllocator& _allocator,
+                         HubbardComputeDevice& _cdev, ErrorStream& errors, ImVec4 _clear_color = ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
 
    ~ProgramState();
 
@@ -148,7 +209,10 @@ public:
    void handle_events();
    void render_UI();
 
-private:
+   ProgramState& operator=(const ProgramState&) = delete;
+   ProgramState& operator=(ProgramState&&) = delete;
+
+   ProgramState* _this;
    GLFWwindow* window;
    ImGuiWindowFlags window_flags;
    ImVec4 clear_color;
@@ -159,17 +223,17 @@ private:
    int in_Ns = 5;
    int in_N_up = 2;
    int in_N_dn = 2;
+   int N_dn_min = 0, N_dn_max = 0;
+   int N_up_min = 0, N_up_max = 0;
    HubbardParams params;
    HubbardSizes params_sz;
    IntArgs int_args;
 
-   float x_step = 0.1;
-   float T_range[3] = {0.1, 1, x_step};
-   float U_range[3] = {0, 1, x_step};
-   int Ns_range[3] = {1, 1, 1};
+   ScalarRange<float> T_range;
+   ScalarRange<float> U_range;
    bool force_halffilling = false;
 
-   bool computing = false;
+   bool compute = false;
    char counter_buf[256];
    char result_E0_buf[256];
    char result_compute_time_buf[256];
@@ -177,30 +241,18 @@ private:
 
    u64 compute_start_counter = 0;
    u64 compute_end_counter = 0;
-   bool show_halffilling = false;
-   bool show_noninteracting = false;
-   bool show_atomic_limit = false;
-   bool show_dimer = false;
    bool plot_mode = false;
-   bool plot_done = true;
    bool plot_T_range = true;
-   int plot_x_step_idx = 0;
+   bool param_input = true;
+   bool params_changed = true;
+   bool force_clear_profiling_results = false;
 
    double last_compute_elapsed_s = 0;
 
    WorkQueue<4> work_queue;
    ArenaAllocator& allocator;
-   TaskFuture compute_result;
+   TaskFuture* compute_result;
    HubbardModel model;
-
-   const int MAX_PLOT_PTS = 500;
-   std::vector<real> plot_E_vals;
-   std::vector<real> plot_x_vals;
-
-   std::vector<real> halffilling_E_vals;
-   std::vector<real> dimer_E_vals;
-   std::vector<real> nonint_E_vals;
-   std::vector<real> atomic_E_vals;
 
    std::vector<const char*> prof_labels;
    std::vector<float> prof_total;
@@ -209,7 +261,12 @@ private:
    std::vector<float> prof_max;
    std::vector<int> prof_count;
    std::vector<double> prof_y_ticks;
+   std::vector<double> prof_percentage;
+
+   std::vector<real> plot_x_vals;
+   std::vector<PlotElement> plot_elements;
 };
+
 
 #define UI_H
 #endif

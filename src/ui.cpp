@@ -39,14 +39,12 @@ void sleep(double ms)
 }
 
 template<size_t thread_count>
-void worker_proc(WorkQueue<thread_count>* const q, const int worker_ID)
+void worker_proc(std::stop_token s, WorkQueue<thread_count>* const q, const int worker_ID)
 {
-   for(;;)
+   while(!s.stop_requested())
    {
-      if(!q->pop(worker_ID))
-      {
-         q->pending.acquire();
-      }
+      q->pending.acquire();
+      q->pop(worker_ID);
    }
 }
 
@@ -56,22 +54,47 @@ WorkQueue<thread_count>::WorkQueue() : workers{make_enumerated_carray<std::jthre
 template<size_t thread_count> template<class... Args>
 TaskFuture WorkQueue<thread_count>::push(std::invocable<Args...> auto f, Args&&... args)
 {
+   // NOTE: Always return a value from task function
    static_assert(sizeof(f(args...)) <= sizeof(TaskResult));
+
+   tasks_mutex.lock();
    int task_ID = gen_task_ID();
+   // NOTE: Capturing by reference
    tasks.emplace_back(task_ID, [&]() { return TaskResult{f(args...)}; });
    TaskFuture result(tasks.back(), task_ID);
+   tasks_mutex.unlock();
    
    pending.release();
    return result;
+}
+
+template<size_t thread_count> template<class... Args>
+TaskFuture WorkQueue<thread_count>::push_valcap(std::invocable<Args...> auto f, Args&&... args)
+{
+   // NOTE: Always return a value from task function
+   static_assert(sizeof(f(args...)) <= sizeof(TaskResult));
+
+   tasks_mutex.lock();
+   int task_ID = gen_task_ID();
+   // NOTE: Capturing by value
+   tasks.emplace_back(task_ID, [=]() { return TaskResult{f(args...)}; });
+   TaskFuture result(tasks.back(), task_ID);
+   tasks_mutex.unlock();
+   
+   pending.release();
+   return std::move(result);
 }
 
 template<size_t thread_count> template <class T, class... Args>
 TaskFuture WorkQueue<thread_count>::push(T& t, auto (T::*f)(Args...), Args&&... args)
 {
    static_assert(sizeof((t.*f)(args...)) <= sizeof(TaskResult));
+
+   tasks_mutex.lock();
    int task_ID = gen_task_ID();
    tasks.emplace_back(task_ID, [&t, f, args...]() { return TaskResult{(t.*f)(args...)}; });
    TaskFuture result(tasks.back(), task_ID);
+   tasks_mutex.unlock();
    
    pending.release();
    return result;
@@ -80,9 +103,11 @@ TaskFuture WorkQueue<thread_count>::push(T& t, auto (T::*f)(Args...), Args&&... 
 template<size_t thread_count>
 TaskFuture WorkQueue<thread_count>::push(Task& task)
 {
+   tasks_mutex.lock();
    int task_ID = gen_task_ID();
    tasks.push_back({.ID = task_ID, .task = task});
    TaskFuture result(tasks.back(), task_ID);
+   tasks_mutex.unlock();
 
    pending.release();
    return result;
@@ -132,8 +157,8 @@ void WorkQueue<thread_count>::cancel_task(TaskFuture& f)
 template<size_t thread_count>
 bool WorkQueue<thread_count>::pop(int worker_ID)
 {
-   bool acquired_task = false;
-   if(tasks.size() > 0 && tasks_mutex.try_lock())
+   tasks_mutex.lock(); 
+   if(tasks.size() > 0)
    {
       auto task = std::move(tasks.back());
       tasks.pop_back();
@@ -141,16 +166,18 @@ bool WorkQueue<thread_count>::pop(int worker_ID)
       tasks_mutex.unlock();
       task();
       worker_statuses[worker_ID] = 0;
-      acquired_task = true;
+   }
+   else
+   {
+      tasks_mutex.unlock();
    }
 
-   return acquired_task;
+   return true;
 }
-
 
 ProgramState::ProgramState(const char* window_name, int window_w, int window_h, ArenaAllocator& _allocator,
                            HubbardComputeDevice& _cdev, ErrorStream& errors, ImVec4 _clear_color) :
-   clear_color(_clear_color), allocator(_allocator), model(_cdev, _allocator)
+   clear_color(_clear_color), allocator(_allocator), model(_cdev, _allocator), _this(this)
 {
    glfwSetErrorCallback(glfw_error_callback);
    if(!glfwInit())
@@ -202,6 +229,8 @@ ProgramState::ProgramState(const char* window_name, int window_w, int window_h, 
 
    params = {in_T, in_U, in_Ns, in_N_up, in_N_dn};
    params_sz = hubbard_memory_requirements(params);
+   T_range = {.interval = {0.1f, 1.0f}, .dim = 10};
+   U_range = {.interval = {0.0f, 1.0f}, .dim = 10};
    int_args = {.lower = 1e-8, .upper = 100, .abs_tol = 1e-8, .rel_tol = 1e-6, .min_steps = 2, .max_steps = 60};
 
    memcpy(counter_buf, "0 s", 4);
@@ -209,12 +238,14 @@ ProgramState::ProgramState(const char* window_name, int window_w, int window_h, 
    sprintf_s(result_compute_time_buf, "Compute time: ");
    format_memory(params_memory_buf, ARRAY_SIZE(params_memory_buf), params_sz.workspace_size);
 
-   plot_E_vals.reserve(MAX_PLOT_PTS);
-   plot_x_vals.reserve(MAX_PLOT_PTS);
-   halffilling_E_vals.reserve(MAX_PLOT_PTS);
-   dimer_E_vals.reserve(MAX_PLOT_PTS);
-   nonint_E_vals.reserve(MAX_PLOT_PTS);
-   atomic_E_vals.reserve(MAX_PLOT_PTS);
+   plot_elements.reserve(size_t(PLOT_QUANTITY::COUNT));
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::COMPUTED_E, .type = PLOT_TYPE::LINE,    .legend = "Computed",            .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::DIMER_E,    .type = PLOT_TYPE::LINE,    .legend = "Dimer, ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::NONINT_E,   .type = PLOT_TYPE::SCATTER, .legend = "U = 0, ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::ATOMIC_E,   .type = PLOT_TYPE::SCATTER, .legend = "T = 0, ground truth",    .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::HF_E,       .type = PLOT_TYPE::LINE,    .legend = "Half-filling, asymp. (Lieb & Wu)",  .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   compute_result = &plot_elements[0].comp_status; // plot_elements should not be resized after this without updating compute_result pointer!
+
 }
 
 ProgramState::~ProgramState()
@@ -235,28 +266,209 @@ bool ProgramState::is_running()
    return !glfwWindowShouldClose(window);
 }
 
+template<class... Args>
+int plot_work_proc(ProgramState* s, ScalarRange<real> domain, int eidx, bool plot_T_range, real(*E)(const HubbardParams&, Args...), Args... args)
+{
+   HubbardParams params = s->params;
+   std::vector<real>& result = s->plot_elements[eidx].y;
+   real& x_param = plot_T_range ? params.T : params.U;
+   for(real val : domain)
+   {
+      x_param = val;
+      result.push_back(E(params, args...)/params.Ns);
+   }
+   return 0;
+}
+
 void ProgramState::handle_events()
 {
    glfwPollEvents();
-}
 
-void ProgramState::render_UI()
-{
-   // TODO: Move to handle events
-   if(computing && compute_result.is_valid() && compute_result.is_ready())
+   if(in_N_up > in_Ns) { in_N_up = in_Ns; }
+   if(in_N_dn > in_Ns) { in_N_dn = in_Ns; }
+
+   if(force_halffilling)
    {
-      compute_end_counter = glfwGetTimerValue();
-      last_compute_elapsed_s = get_s_elapsed(compute_start_counter, compute_end_counter, timer_freq);
-      computing = false;
-      real E0 = compute_result.get<real>();
-      sprintf_s(result_E0_buf, "E0: %f", E0);
-      sprintf_s(result_compute_time_buf, "Compute time: %llu s", u64(last_compute_elapsed_s));
+      in_Ns += in_Ns & 1;
+      in_N_up = int(in_Ns/2);
+      in_N_dn = in_N_up;
+      N_dn_min = in_N_up;
+      N_dn_max = in_N_up;
+      N_up_min = in_N_up;
+      N_up_max = in_N_up;
+   }
+   else
+   {
+      N_dn_min = (in_N_dn == 0) ? 1 : 0;
+      N_dn_max = in_Ns;
+      N_up_min = (in_N_up == 0) ? 1 : 0;
+      N_up_max = in_Ns;
+   }
 
+   if(param_input)
+   {
+      HubbardParams new_params = {in_T, in_U, in_Ns, in_N_up, in_N_dn};
+      params_changed = (params != new_params);
+      params = new_params;
+
+      if(params_changed)
+      {
+         params_sz = hubbard_memory_requirements(params);
+         format_memory(params_memory_buf, ARRAY_SIZE(params_memory_buf), params_sz.workspace_size);
+
+         force_clear_profiling_results = true; 
+      }
+   }
+
+   auto& plotting_range = plot_T_range ? T_range : U_range;
+
+   auto plotting_T_range = T_range;
+   auto plotting_U_range = U_range;
+   if(plot_T_range)
+   {
+      plotting_U_range.min = params.U;
+      plotting_U_range.max = params.U;
+      plotting_U_range.dim = 1;
+   }
+   else
+   {
+      plotting_T_range.min = params.T;
+      plotting_T_range.max = params.T;
+      plotting_T_range.dim = 1;
+   }
+
+   if(compute)
+   {
       if(plot_mode)
       {
-         plot_E_vals.push_back(E0/params.Ns);
+         plot_x_vals.resize(0);
+         plot_x_vals.reserve(plotting_range.dim);
+         std::copy(plotting_range.begin(), plotting_range.end(), std::back_inserter(plot_x_vals));
+
+         int eidx = 0;
+         for(PlotElement& e : plot_elements)
+         {
+            // TODO: Even if comp_status is pending, might want to let it through and upon reassigning e.comp_result it will block until the result is ready, which might be desired behavior
+            if(e.enabled && !e.comp_status.is_pending())
+            {
+               assert(!e.comp_status.is_valid() || e.comp_status.is_ready());
+               e.y.resize(0);
+
+               switch(e.value_type)
+               {
+                  case PLOT_QUANTITY::COMPUTED_E: 
+                  {
+                     e.y.reserve(plotting_range.dim);
+                     e.comp_status = work_queue.push_valcap([](ProgramState* s, ScalarRange<real> plotting_range, int eidx, bool plot_T_range)
+                                                            {
+                                                               HubbardParams params = s->params;
+                                                               std::vector<real>& result = s->plot_elements[eidx].y;
+                                                               real& x_param = plot_T_range ? params.T : params.U;
+                                                               for(real val : plotting_range)
+                                                               {
+                                                                  s->compute_start_counter = glfwGetTimerValue();
+                                                                  x_param = val;
+                                                                  result.push_back(s->model.set_params(params).E0()/real(params.Ns));
+                                                                  s->compute_end_counter = glfwGetTimerValue();
+                                                                  s->last_compute_elapsed_s = get_s_elapsed(s->compute_start_counter, s->compute_end_counter, s->timer_freq);
+                                                               }
+                                                               return 0;
+                                                            }, _this, plotting_range, eidx, plot_T_range);
+                     e.show = true;
+                  } break;
+
+                  case PLOT_QUANTITY::DIMER_E: 
+                  {
+                     e.show = false;
+                     if(params.Ns == 2)
+                     {
+                        assert(!e.comp_status.is_pending());
+                        e.y.reserve(plotting_range.dim);
+
+                        if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
+                        e.comp_status = work_queue.push_valcap(plot_work_proc<BCS>, _this, plotting_range, eidx, plot_T_range, 
+                                                               dimer_E0, BCS::PERIODIC);
+                        e.show = true;
+                     }
+                  } break;
+
+                  case PLOT_QUANTITY::NONINT_E:
+                  {
+                     e.y.reserve(plotting_T_range.dim);
+                     e.show = false;
+                     if((plot_T_range && params.U == 0.0) || (!plot_T_range && plotting_U_range.includes(0.0)))
+                     {
+                        if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
+                        e.comp_status = work_queue.push_valcap(plot_work_proc<BCS>, _this, plotting_T_range, eidx, true,
+                                                               noninteracting_E0, BCS::PERIODIC);
+                        if(plot_T_range)
+                        {
+                           e.x = &plot_x_vals;
+                        }
+                        else
+                        {
+                           e.x = &ZERO_FVEC;
+                        }
+                        e.show = true;
+                     }
+                  } break;
+
+                  case PLOT_QUANTITY::ATOMIC_E: 
+                  {
+                     e.y.reserve(plotting_U_range.dim);
+                     e.show = false;
+                     if((!plot_T_range && params.T == 0.0) || (plot_T_range && plotting_T_range.includes(0.0)))
+                     {
+                        if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
+                        e.comp_status = work_queue.push_valcap(plot_work_proc<>, _this, plotting_U_range, eidx, false,
+                                                               atomic_E0);
+                        if(plot_T_range)
+                        {
+                           e.x = &ZERO_FVEC;
+                        }
+                        else
+                        {
+                           e.x = &plot_x_vals;
+                        }
+                        e.show = true;
+                     }
+                  } break;
+
+                  case PLOT_QUANTITY::HF_E:
+                  {
+                     e.show = false;
+                     if(is_halffilling(params))
+                     {
+                        e.y.reserve(plotting_range.dim);
+
+                        if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
+                        e.comp_status = work_queue.push_valcap(plot_work_proc<IntArgs>, _this, plotting_range, eidx, plot_T_range,
+                                                               halffilled_E, int_args);
+                        e.show = true;
+                     }
+                  } break;
+
+                  default: { assert(!"Unsupported plot quantity."); }
+               }
+            }
+
+            eidx++;
+         }
       }
       else
+      {
+         assert(!compute_result->is_valid() || compute_result->is_ready());
+         compute_start_counter = glfwGetTimerValue();
+         model.set_params(params);
+         *compute_result = work_queue.push(model, &HubbardModel::E0); 
+      }
+
+      compute = false;
+   }
+
+   if(compute_result->is_valid() && compute_result->is_ready())
+   {
+      if(!plot_mode || force_clear_profiling_results)
       {
          prof_labels.resize(0);
          prof_total.resize(0);
@@ -265,6 +477,19 @@ void ProgramState::render_UI()
          prof_max.resize(0);
          prof_count.resize(0);
          prof_y_ticks.resize(0);
+         prof_percentage.resize(0);
+
+         force_clear_profiling_results = false;
+      }
+
+      if(!plot_mode)
+      {
+         compute_end_counter = glfwGetTimerValue(); 
+         last_compute_elapsed_s = get_s_elapsed(compute_start_counter, compute_end_counter, timer_freq);
+
+         real E0 = compute_result->get<real>();
+         sprintf_s(result_E0_buf, "E0: %f", E0);
+         sprintf_s(result_compute_time_buf, "Compute time: %llu s", u64(last_compute_elapsed_s));
 
          int trace_idx = 1;
          for(auto a : TimedScope::trace_stats)
@@ -277,11 +502,24 @@ void ProgramState::render_UI()
             prof_max.push_back(stats.max);
             prof_count.push_back(stats.count);
             prof_y_ticks.push_back(trace_idx++);
+            prof_percentage.push_back(stats.total/(10.0f*last_compute_elapsed_s));
          }
-         TimedScope::clear();
       }
+
+      TimedScope::clear();
+      *compute_result = {};
    }
 
+   if(compute_result->is_pending())
+   {
+      sprintf_s(counter_buf, "%llu s", u64(get_s_to_now(compute_start_counter, timer_freq)));
+   }
+
+   params_changed = false;
+}
+
+void ProgramState::render_UI()
+{
    int display_w, display_h;
    glfwGetFramebufferSize(window, &display_w, &display_h);
    ImVec2 plot_win_pos       = {0.0f*display_w, 0.0f*display_h};
@@ -307,36 +545,21 @@ void ProgramState::render_UI()
    {
       ImPlot::SetupAxes(plot_T_range ? "T" : "U", "E0/Ns");
       //ImPlot::SetupAxes("U/T", "E0/Ns");
-      ImPlot::SetNextLineStyle(IMPLOT_AUTO_COL, 1.5f);
-      ImPlot::SetNextMarkerStyle(ImPlotMarker_Square);
 
-      ImPlot::PlotLine("Computed", plot_x_vals.data(), plot_E_vals.data(), plot_E_vals.size());
-
-      if(show_halffilling && is_halffilling(params))
+      for(const PlotElement& e : plot_elements)
       {
-         assert(plot_x_vals.size() >= halffilling_E_vals.size());
-         ImPlot::PlotLine("Lieb & Wu", plot_x_vals.data(), halffilling_E_vals.data(), halffilling_E_vals.size());
-      }
-      if(show_noninteracting)
-      {
-         assert(plot_x_vals.size() >= nonint_E_vals.size());
-         ImPlot::SetNextLineStyle(IMPLOT_AUTO_COL, 1.5f);
-         ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5.0f, ImVec4(0, 0, 0, 0), IMPLOT_AUTO);
-         ImPlot::PlotScatter("U = 0, ground truth", plot_x_vals.data(), nonint_E_vals.data(), nonint_E_vals.size());
-      }
-      if(show_atomic_limit)
-      {
-         assert(plot_x_vals.size() >= atomic_E_vals.size());
-         ImPlot::SetNextLineStyle(IMPLOT_AUTO_COL, 1.5f);
-         ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5.0f, ImVec4(0, 0, 0, 0), IMPLOT_AUTO);
-         ImPlot::PlotScatter("T = 0, ground truth", plot_x_vals.data(), atomic_E_vals.data(), atomic_E_vals.size());
-      }
-      if(show_dimer)
-      {
-         assert(plot_x_vals.size() >= dimer_E_vals.size());
-         ImPlot::SetNextLineStyle(IMPLOT_AUTO_COL, 1.5f);
-         ImPlot::SetNextMarkerStyle(ImPlotMarker_Cross);//, 2.0f);
-         ImPlot::PlotLine("Dimer, ground truth", plot_x_vals.data(), dimer_E_vals.data(), dimer_E_vals.size());
+         if(e.show && e.enabled)
+         {
+            assert(plot_x_vals.size() >= e.y.size());
+            ImPlot::SetNextLineStyle(IMPLOT_AUTO_COL, 1.5f);
+            ImPlot::SetNextMarkerStyle(e.marker_style);
+            switch(e.type)
+            {
+               case PLOT_TYPE::LINE: { ImPlot::PlotLine(e.legend, e.x->data(), e.y.data(), e.y.size()); } break;
+               case PLOT_TYPE::SCATTER: { ImPlot::PlotScatter(e.legend, e.x->data(), e.y.data(), e.y.size()); } break;
+               default: { assert(!"Unsupported plot type."); }
+            } 
+         }
       }
 
       ImPlot::EndPlot();
@@ -349,226 +572,57 @@ void ProgramState::render_UI()
    ImGui::Begin("Settings", 0, window_flags);
 
    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
-   ImGui::PushStyleVar(ImGuiStyleVar_Alpha, computing ? 0.5 : 1.0);
+   ImGui::PushStyleVar(ImGuiStyleVar_Alpha, compute_result->is_pending() ? 0.5 : 1.0);
 
-   bool should_compute = false;
-   if(ImGui::Button("Compute"))
+   if(ImGui::Button("Compute") && !compute_result->is_pending())
    {
-      if(plot_mode)
-      {
-         plot_done = false;
-         plot_x_step_idx = 0;
-         plot_E_vals.resize(0);
-         plot_x_vals.resize(0);
-
-         halffilling_E_vals.resize(0);
-         dimer_E_vals.resize(0);
-         nonint_E_vals.resize(0);
-         atomic_E_vals.resize(0);
-
-         if(plot_T_range)
-         { 
-            real T_min = T_range[0];
-            params.T = T_min; 
-            in_T = T_min; 
-
-            real cur_T = T_range[0];
-            int i = 0;
-            while(cur_T < T_range[1])
-            {
-               plot_x_vals.push_back(cur_T);
-               cur_T = T_range[0] + (++i)*T_range[2];
-            }
-            plot_x_vals.push_back(T_range[1]);
-         }
-         else
-         {
-            real U_min = U_range[0];
-            params.U = U_min; 
-            in_U = U_min;
-
-            real cur_U = U_range[0];
-            int i = 0;
-            while(cur_U < U_range[1])
-            {
-               plot_x_vals.push_back(cur_U);
-               cur_U = U_range[0] + (++i)*U_range[2];
-            }
-            plot_x_vals.push_back(U_range[1]);
-         }
-      }
-      else
-      {
-         should_compute = true;
-      }
+      compute = true;
    }
 
-   if(plot_mode && !plot_done)
-   {
-      should_compute = true;
-   }
-
-   if(should_compute && !computing)
-   {
-      compute_start_counter = glfwGetTimerValue();
-
-      // TODO: Move to handle events
-      if(plot_mode && !plot_done)
-      {
-         if(plot_T_range)
-         {
-            real T_min = T_range[0];
-            real T_max = T_range[1];
-            real dT = T_range[2];
-            if(params.T >= T_max || plot_x_step_idx >= MAX_PLOT_PTS)
-            {
-               plot_done = true;
-               plot_x_step_idx = 0;
-            }
-            else
-            {
-               params.T = T_min + plot_x_step_idx*dT;
-               if(params.T >= T_max) { params.T = T_max; }
-
-               in_T = params.T;
-               plot_x_step_idx++;
-            }
-
-         }
-         else
-         {
-            real U_min = U_range[0];
-            real U_max = U_range[1];
-            real dU = U_range[2];
-            if(params.U >= U_max || plot_x_step_idx >= MAX_PLOT_PTS)
-            {
-               plot_done = true;
-               plot_x_step_idx = 0;
-            }
-            else
-            {
-               params.U = U_min + plot_x_step_idx*dU;
-               if(params.U >= U_max) { params.U = U_max; }
-
-               in_U = params.U;
-               plot_x_step_idx++;
-            }
-         }
-
-         if(!plot_done)
-         {
-            if(show_halffilling && is_halffilling(params))
-            {
-               halffilling_E_vals.push_back(halffilled_E_per_N(params.T, params.U, int_args));
-            }
-            if(show_dimer)
-            {
-               dimer_E_vals.push_back(dimer_E0(params, BCS::PERIODIC)/params.Ns);
-            }
-            if(show_noninteracting)
-            {
-               nonint_E_vals.push_back(noninteracting_E0(params, BCS::PERIODIC)/params.Ns);
-            }
-            if(show_atomic_limit)
-            {
-               atomic_E_vals.push_back(atomic_E0(params)/params.Ns);
-            }
-         }
-      }
-
-      if(!plot_done || !plot_mode)
-      {
-         model.set_params(params);
-         compute_result = work_queue.push(model, &HubbardModel::E0);
-         computing = true;
-      }
-      else
-      {
-         computing = false;
-      }
-   }
    ImGui::PopStyleVar();
 
    ImGui::SameLine();
    if(ImGui::Button("Cancel"))
    {
       assert(!"Not implemented!"); // The actual tasks pushed to the work queue don't handle thread termination currently
-
-      computing = false;
-      compute_end_counter = glfwGetTimerValue();
-
-      // TODO: Move to handle_events
-      work_queue.cancel_task(compute_result);
-      memcpy(counter_buf, "0 s", 4);
    }
    ImGui::PopStyleVar();
 
-   if(computing)
-   {
-      sprintf_s(counter_buf, "%llu s", u64(get_s_to_now(compute_start_counter, timer_freq)));
-   }
    ImGui::Text(counter_buf);
 
    if(ImGui::CollapsingHeader("Parameters"))
    {
-      ImGui::InputFloat("T", &in_T);
-      ImGui::InputFloat("U", &in_U);
-      ImGui::SliderInt("Ns", &in_Ns, 1, MAX_SITE_COUNT);
-      int N_dn_min, N_dn_max;
-      int N_up_min, N_up_max;
-      if(force_halffilling)
-      {
-         in_Ns += in_Ns & 1;
-         in_N_up = int(in_Ns/2);
-         in_N_dn = in_N_up;
-         N_dn_min = in_N_up;
-         N_dn_max = in_N_up;
-         N_up_min = in_N_up;
-         N_up_max = in_N_up;
-      }
-      else
-      {
-         N_dn_min = (in_N_dn == 0) ? 1 : 0;
-         N_dn_max = in_Ns;
-         N_up_min = (in_N_up == 0) ? 1 : 0;
-         N_up_max = in_Ns;
-      }
-      ImGui::SliderInt("N_up", &in_N_up, N_dn_min, N_dn_max);
-      ImGui::SliderInt("N_dn", &in_N_dn, N_up_min, N_up_max);
-      if(in_N_up > in_Ns) { in_N_up = in_Ns; }
-      if(in_N_dn > in_Ns) { in_N_dn = in_Ns; }
-
-      HubbardParams new_params = {in_T, in_U, in_Ns, in_N_up, in_N_dn};
-      bool params_changed = (params != new_params);
-      params = new_params;
+      param_input = ImGui::InputFloat("T", &in_T) |
+         ImGui::InputFloat("U", &in_U) |
+         ImGui::SliderInt("Ns", &in_Ns, 1, MAX_SITE_COUNT) |
+         ImGui::SliderInt("N_up", &in_N_up, N_dn_min, N_dn_max) |
+         ImGui::SliderInt("N_dn", &in_N_dn, N_up_min, N_up_max);
 
       ImGui::PushStyleVar(ImGuiStyleVar_Alpha, plot_T_range ? 1.0 : 0.5);
-      if(ImGui::InputFloat3("T range", T_range))
-      {
-         if(T_range[2] < 0) { T_range[2] = 0; };
-         plot_T_range = true;
+      int& in_plot_point_count = T_range.dim;
+      if(ImGui::InputFloat2("T range", T_range.interval))
+      { 
+         plot_T_range = true; 
       }
       ImGui::PopStyleVar();
 
       ImGui::PushStyleVar(ImGuiStyleVar_Alpha, plot_T_range ? 0.5 : 1.0);
-      if(ImGui::InputFloat3("U range", U_range))
-      {
-         if(U_range[2] < 0) { U_range[2] = 0; };
+      if(ImGui::InputFloat2("U range", U_range.interval))
+      { 
+         in_plot_point_count = U_range.dim;
          plot_T_range = false;
       }
       ImGui::PopStyleVar();
 
-      ImGui::InputInt3("Ns range", Ns_range);
-      Ns_range[0] = std::clamp(Ns_range[0], 1, MAX_SITE_COUNT);
-      Ns_range[1] = std::clamp(Ns_range[1], Ns_range[0], MAX_SITE_COUNT);
+      ImGui::InputInt("points", &in_plot_point_count);
+      in_plot_point_count = std::max(0, in_plot_point_count);
 
-      ImGui::Checkbox("Half-filling", &force_halffilling);
+      //ImGui::InputInt3("Ns range", Ns_range);
+      //Ns_range[0] = std::clamp(Ns_range[0], 1, MAX_SITE_COUNT);
+      //Ns_range[1] = std::clamp(Ns_range[1], Ns_range[0], MAX_SITE_COUNT);
 
-      if(params_changed)
-      {
-         params_sz = hubbard_memory_requirements(params);
-         format_memory(params_memory_buf, ARRAY_SIZE(params_memory_buf), params_sz.workspace_size);
-      }
+      param_input = param_input | ImGui::Checkbox("Half-filling", &force_halffilling);
+
       ImGui::Text("Min memory (excl. VRAM): "); // Excludes memory allocated in compute.lib
       ImGui::SameLine();
       ImGui::Text(params_memory_buf);
@@ -580,10 +634,10 @@ void ProgramState::render_UI()
    }
    if(ImGui::CollapsingHeader("Benchmark results"))
    {
-      ImGui::Checkbox("Half-filling, asymptotic", &show_halffilling);
-      ImGui::Checkbox("Non-interacting (U = 0)", &show_noninteracting);
-      ImGui::Checkbox("Atomic limit (T = 0)", &show_atomic_limit);
-      ImGui::Checkbox("Dimer", &show_dimer);
+      for(PlotElement& e : plot_elements)
+      {
+         ImGui::Checkbox(e.legend, &e.enabled);
+      }
    }
    if(ImGui::CollapsingHeader("Results"))
    {
@@ -597,37 +651,39 @@ void ProgramState::render_UI()
    ImGui::SetNextWindowPos(profiling_win_pos);
    ImGui::SetNextWindowSize(profiling_win_size);
    ImGui::Begin("Profiling", 0, window_flags);
-   if(!plot_mode)
-   {
+
 #ifdef HUBBARD_DEBUG
-      if(prof_mean.size() > 0 && ImPlot::BeginPlot("##profplot", ImVec2(-1, -1)))
+   if(prof_mean.size() > 0 && ImPlot::BeginPlot("##profplot", ImVec2(-1, -1)))
+   {
+      ImPlot::SetupLegend(ImPlotLocation_SouthEast);
+      ImPlot::SetupAxisFormat(ImAxis_X1, "%g ms");
+
+      ImPlot::SetupAxisTicks(ImAxis_Y1, prof_y_ticks.data(), prof_y_ticks.size(), prof_labels.data(), false);
+
+      ImPlot::PlotBars("Total", prof_total.data(), prof_total.size(), 0.5, 1, ImPlotBarsFlags_Horizontal);
+      ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.5f);
+      ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, 2.5f);
+      ImPlot::PlotBars("Max", prof_max.data(), prof_max.size(), 0.5, 1, ImPlotBarsFlags_Horizontal);
+      ImPlot::PlotBars("Mean", prof_mean.data(), prof_mean.size(), 0.5, 1, ImPlotBarsFlags_Horizontal);
+      ImPlot::PlotBars("Min", prof_min.data(), prof_min.size(), 0.5, 1, ImPlotBarsFlags_Horizontal);
+
+      if(last_compute_elapsed_s > 0.0)
       {
-         ImPlot::SetupLegend(ImPlotLocation_SouthEast);
-         ImPlot::SetupAxisFormat(ImAxis_X1, "%g ms");
-
-         ImPlot::SetupAxisTicks(ImAxis_Y1, prof_y_ticks.data(), prof_y_ticks.size(), prof_labels.data(), false);
-
-         ImPlot::PlotBars("Total", prof_total.data(), prof_total.size(), 0.5, 1, ImPlotBarsFlags_Horizontal);
-         ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.5f);
-         ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, 2.5f);
-         ImPlot::PlotBars("Max", prof_max.data(), prof_max.size(), 0.5, 1, ImPlotBarsFlags_Horizontal);
-         ImPlot::PlotBars("Mean", prof_mean.data(), prof_mean.size(), 0.5, 1, ImPlotBarsFlags_Horizontal);
-         ImPlot::PlotBars("Min", prof_min.data(), prof_min.size(), 0.5, 1, ImPlotBarsFlags_Horizontal);
-
          for(int i = 0; i < prof_total.size(); i++)
          {
-            ImPlot::Annotation(prof_total[i], i + 1, ImVec4(0, 0, 0, 0), ImVec2(0, -5), true, "%d, %.2f%%", prof_count[i], prof_total[i]/(10.0*last_compute_elapsed_s));
+            ImPlot::Annotation(prof_total[i], i + 1, ImVec4(0, 0, 0, 0), ImVec2(0, -5), true, "%d, %.2f%%", prof_count[i], prof_percentage[i]);
          }
-
-         ImPlot::PopStyleVar();
-         ImPlot::PopStyleVar();
-
-         ImPlot::EndPlot();
       }
-#else
-      ImPlot::Text("Use debug build to access profiling.");
-#endif
+
+      ImPlot::PopStyleVar();
+      ImPlot::PopStyleVar();
+
+      ImPlot::EndPlot();
    }
+#else
+   ImPlot::Text("Use debug build to access profiling.");
+#endif
+
    ImGui::End();
 
    ImGui::Render();

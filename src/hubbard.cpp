@@ -24,15 +24,15 @@ int main()
    }
    ArenaAllocator allocator(100*1024*1024);
 
-   u64 timer_freq = glfwGetTimerFrequency();
-   u64 end_counter = 0;
-   u64 last_counter = glfwGetTimerValue();
-   ProgramState state("Hubbard", 1280, 720, allocator, cdev, errors);
+   ProgramState state("Hubbard", 1280, 720, allocator, cdev, errors); // NOTE: Also initializes glfw
    if(errors.has_errors)
    {
       std::cerr << errors;
       return -1;
    }
+   u64 timer_freq = glfwGetTimerFrequency();
+   u64 end_counter = 0;
+   u64 last_counter = glfwGetTimerValue();
 
    while(state.is_running())
    {

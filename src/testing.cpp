@@ -14,8 +14,12 @@ using ::testing::Not;
 #include "basis.cpp"
 #include "allocator.cpp"
 #include "solver.cpp"
+#include "profiler.cpp"
 
 // NOTE: Do not run these tests in parallel.
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(KBasisTest);
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(HIntTest);
 
 //            T   U   Ns N_up N_dn
 KS_BASIS_TEST(1, 2.7, 5,   1,  1)
@@ -23,7 +27,6 @@ KS_BASIS_TEST(1, 2.7, 5,   1,  2)
 KS_BASIS_TEST(1, 2.7, 5,   2,  1)
 KS_BASIS_TEST(1, 2.7, 5,   2,  2)
 KS_BASIS_TEST(1, 2.7, 6,   3,  1)
-//
 KS_BASIS_TEST(1, 2.7, 7,   4,  2)
 KS_BASIS_TEST(1, 2.7, 7,   3,  3)
 KS_BASIS_TEST(1, 2.7, 7,   4,  3)
@@ -38,7 +41,8 @@ INSTANTIATE_TEST_SUITE_P(KBasisTest_small, KBasisTest,
                               HubbardParams(1, 2.7, 6,   3,  1),
                               HubbardParams(1, 2.7, 7,   4,  2),
                               HubbardParams(1, 2.7, 7,   3,  3),
-                              HubbardParams(1, 2.7, 7,   4,  3)
+                              HubbardParams(1, 2.7, 7,   4,  3),
+                              HubbardParams(1, 2.7, 9,   4,  4)
                           ));
 
 INSTANTIATE_TEST_SUITE_P(HIntTest_small, HIntTest,
@@ -52,6 +56,7 @@ INSTANTIATE_TEST_SUITE_P(HIntTest_small, HIntTest,
                               HubbardParams(1, 2.7, 7,   4,  2),
                               HubbardParams(1, 2.7, 7,   3,  3),
                               HubbardParams(1, 2.7, 7,   4,  3)
+                              //,HubbardParams(5.2, 3.8, 9, 4,  4)
                           ));
 
 #define set_up_KS_configs(...) ASSERT_NO_FATAL_FAILURE(EXPAND(__set_up_KS_configs(__VA_ARGS__)));
@@ -65,7 +70,7 @@ void __set_up_KS_configs(KSBlockIterator& itr, const HubbardParams& params)
       itr.append_block_data(temp_itr);
    }
 
-   itr.move_basis(temp_itr);
+   itr.copy_basis(temp_itr);
 }
 
 template <StructuralHubbardParams P>
@@ -322,13 +327,14 @@ TEST(SolverTest, test_atomic_E0)
 {
    std::vector<HubbardParams> params = 
    {
-      //            T  U  Ns N_up N_dn
-      HubbardParams(0, 1, 2,  1,   1),
-      HubbardParams(0, 1, 5,  2,   2),
-      HubbardParams(0,-1, 5,  2,   2),
-      HubbardParams(0, 8, 7,  5,   2),
-      HubbardParams(0, 8, 7,  2,   5),
-      HubbardParams(0,-8, 7,  2,   5),
+      //            T  U    Ns N_up N_dn
+      HubbardParams(0, 1,   2,  1,   1),
+      HubbardParams(0, 1.7, 5,  2,   2),
+      HubbardParams(0,-1,   5,  2,   2),
+      HubbardParams(0, 8,   7,  5,   2),
+      HubbardParams(0, 8.3, 7,  2,   5),
+      HubbardParams(0,-2.7, 7,  2,   5),
+      HubbardParams(0, 5,   9,  4,   4),
    };
 
    for(const HubbardParams& p : params)
@@ -345,11 +351,12 @@ TEST(SolverTest, test_noninteracting_E0)
 {
    std::vector<HubbardParams> params = 
    {
-      //            T  U  Ns N_up N_dn
-      HubbardParams(2, 0, 2,  1,   1),
-      HubbardParams(2, 0, 5,  2,   2),
-      HubbardParams(7, 0, 7,  5,   2),
-      HubbardParams(7, 0, 7,  2,   5),
+      //            T    U  Ns N_up N_dn
+      HubbardParams(2,   0, 2,  1,   1),
+      HubbardParams(2.8, 0, 5,  2,   2),
+      HubbardParams(7,   0, 7,  5,   2),
+      HubbardParams(4.2, 0, 7,  2,   5),
+      HubbardParams(5,   0, 9,  4,   4),
    };
 
    for(const HubbardParams& p : params)
