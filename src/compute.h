@@ -33,13 +33,28 @@ inline std::ostream& operator<<(std::ostream& os, const ErrorStream& s)
    return os;
 }
 
+struct ComputeMemoryReqs 
+{
+   size_t total_host_memory_sz;
+   size_t total_device_memory_sz;
+};
+
 class HubbardComputeDevice
 {
 public:
-   HubbardComputeDevice(ErrorStream* errors = 0);
+   HubbardComputeDevice(size_t host_workspace_init_size, size_t device_workspace_init_size, ErrorStream* errors = 0);
+   HubbardComputeDevice(ComputeMemoryReqs workspace_init_sizes, ErrorStream* errors = 0) :
+      HubbardComputeDevice(workspace_init_sizes.total_host_memory_sz, workspace_init_sizes.total_device_memory_sz, errors) {}
+   HubbardComputeDevice(HubbardSizes init_sizes, ErrorStream* errors = 0) : HubbardComputeDevice(0, 0, errors)
+   {
+      assert(prepare(init_sizes));
+   }
+
    ~HubbardComputeDevice();
 
-   void reset();
+   ComputeMemoryReqs get_memory_requirements(HubbardSizes sz);
+   bool prepare(HubbardSizes sz);
+   //void reset();
 
    real H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
                       const Det* const ket_dets, const real* const ket_coeffs, int ket_count,

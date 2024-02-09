@@ -40,14 +40,10 @@ enum class BCS
    PERIODIC = 2,
 };
 
-struct HubbardSizes;
 class StrideItr;
 class KSBlockIterator;
 class CSFItr;
 class HubbardModel;
-
-HubbardSizes operator*(const HubbardSizes& sz, int n);
-HubbardSizes operator*(int n, const HubbardSizes& sz);
 
 real noninteracting_E(int n, real T, int Ns, BCS bcs);
 real noninteracting_E0(const HubbardParams& params, BCS bcs);
@@ -56,24 +52,6 @@ real atomic_E0(const HubbardParams& params);
 real halffilled_E_per_N(real T, real U, IntArgs int_args);
 HubbardSizes hubbard_memory_requirements(HubbardParams params);
 Det get_config_ref_det(const std::span<Det>& config);
-
-struct HubbardSizes
-{
-   int basis_size;
-   int min_singles;
-   int max_singles;
-   int config_count;
-   int K_block_config_count_upper_bound;
-   int KS_block_config_count_upper_bound;
-   int max_KS_dim;
-   int max_dets_in_config;
-   int max_S_paths;
-   int CSF_coeff_count_upper_bound;
-   // In bytes:
-   size_t alloc_pad; 
-   size_t unaligned_workspace_size;
-   size_t workspace_size;
-};
 
 class StrideItr
 {
@@ -256,8 +234,9 @@ private:
    real S_min;
    real S_max;
 
-   int total_CSF_count;
-   int K_block_CSF_count;
+   int total_CSF_count;   // NOTE: For debug only
+   int K_block_CSF_count; // NOTE: For debug only
+   int KS_max_path_count; // NOTE: For debug only
 
    int K_block_idx; 
    int S_block_idx;
@@ -274,7 +253,9 @@ private:
    std::vector<int, IntArena> K_dets_per_config;
    std::vector<Det, DetArena> S_paths;
 
-   int KS_max_path_count; // NOTE: For debug only
+#if HUBBARD_DEBUG
+   HubbardSizes sz;
+#endif
 
    MArr2R _KS_H;
    real* KS_H_data;

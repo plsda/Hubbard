@@ -26,6 +26,26 @@ std::ostream& operator<<(std::ostream& os, const HubbardParams& params)
    return os;
 }
 
+HubbardSizes operator*(const HubbardSizes& sz, int n)
+{
+   return HubbardSizes{
+      .basis_size                        = n*sz.basis_size,
+      .min_singles                       = 1*sz.min_singles,
+      .max_singles                       = 1*sz.max_singles,
+      .config_count                      = n*sz.config_count,
+      .K_block_config_count_upper_bound  = n*sz.K_block_config_count_upper_bound,
+      .KS_block_config_count_upper_bound = n*sz.KS_block_config_count_upper_bound,
+      .max_KS_dim                        = n*sz.max_KS_dim,
+      .max_dets_in_config                = n*sz.max_dets_in_config,
+      .max_S_paths                       = n*sz.max_S_paths,
+      .CSF_coeff_count_upper_bound       = n*sz.CSF_coeff_count_upper_bound,
+      .alloc_pad                         = 1*sz.alloc_pad,
+      .unaligned_workspace_size          = n*sz.unaligned_workspace_size,
+      .workspace_size                    = n*sz.workspace_size
+   };
+}
+HubbardSizes operator*(int n, const HubbardSizes& sz) { return sz*n; }
+
 // Particle number operator
 u32 count_state(Det det, u32 state_idx) // state_idx = 0, 1, ...
 {

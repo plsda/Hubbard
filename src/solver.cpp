@@ -1,24 +1,4 @@
 
-HubbardSizes operator*(const HubbardSizes& sz, int n)
-{
-   return HubbardSizes{
-      .basis_size                        = n*sz.basis_size,
-      .min_singles                       = n*sz.min_singles,
-      .max_singles                       = n*sz.max_singles,
-      .config_count                      = n*sz.config_count,
-      .K_block_config_count_upper_bound  = n*sz.K_block_config_count_upper_bound,
-      .KS_block_config_count_upper_bound = n*sz.KS_block_config_count_upper_bound,
-      .max_KS_dim                        = n*sz.max_KS_dim,
-      .max_dets_in_config                = n*sz.max_dets_in_config,
-      .max_S_paths                       = n*sz.max_S_paths,
-      .CSF_coeff_count_upper_bound       = n*sz.CSF_coeff_count_upper_bound,
-      .alloc_pad                         =   sz.alloc_pad,
-      .unaligned_workspace_size          = n*sz.unaligned_workspace_size,
-      .workspace_size                    = n*sz.workspace_size
-   };
-}
-HubbardSizes operator*(int n, const HubbardSizes& sz) { return sz*n; }
-
 std::span<Det> StrideItr::operator*() const 
 { 
    return std::span<Det>(data.begin() + strided_idx, (*strides)[idx]); 
@@ -68,6 +48,9 @@ KSBlockIterator::KSBlockIterator(ArenaAllocator& _allocator) :
    allocator(&_allocator), 
 cpt(_allocator.begin_provision()),
    params({}),
+#ifdef HUBBARD_DEBUG
+   sz({}),
+#endif
    K_count(0),
    S_count(0),
    KS_dim(0),
@@ -105,6 +88,9 @@ KSBlockIterator::KSBlockIterator(HubbardParams _params, ArenaAllocator& _allocat
    allocator(&_allocator), 
 cpt(_allocator, sz.workspace_size),
    params(_params),
+#ifdef HUBBARD_DEBUG
+   sz(sz),
+#endif
    K_count(_params.Ns), 
    basis(                sz.basis_size,                        DetArena(allocator,  sz.basis_size,                        sz.alloc_pad)),
    K_block_sizes(        _params.Ns,                           IntArena(allocator,  _params.Ns,                           sz.alloc_pad)),
@@ -208,7 +194,7 @@ void KSBlockIterator::form_CSFs()
          {
             S_paths.resize(0);
             form_S_paths(1, 1, 0.5, s_k, S, S_paths);
-            assert(S_paths.size() == KS_S_path_counts[cidx]);
+            assert(S_paths.size() == KS_S_path_counts[cidx] && S_paths.size() <= sz.max_S_paths);
 
             prev_s_k = s_k;
          }
@@ -248,8 +234,8 @@ KSBlockIterator& KSBlockIterator::operator++()
 
 void KSBlockIterator::reset()
 {
-   total_CSF_count = 0;   // NOTE: For debug only
-   K_block_CSF_count = 0; // NOTE: For debug only
+   total_CSF_count = 0;    // NOTE: For debug only
+   K_block_CSF_count = 0;  // NOTE: For debug only
    KS_dim = 0;
    has_blocks_left = true;
    init_K_block(0);
@@ -258,8 +244,9 @@ void KSBlockIterator::reset()
 
 bool KSBlockIterator::next_K_block()
 {
+   assert(K_dets_per_config.size() <= sz.K_block_config_count_upper_bound);
    assert(K_block_CSF_count == K_block_sizes[K_block_idx]);
-   total_CSF_count += K_block_CSF_count; // NOTE: For debug only
+   total_CSF_count += K_block_CSF_count;           // NOTE: For debug only
 
    int new_idx = K_block_idx + 1;
    if(new_idx < K_count)
@@ -286,11 +273,16 @@ void KSBlockIterator::init_K_block(int idx)
       K_single_counts[cidx] = single_count;
       K_dets_per_config[cidx] = det_count;
       det_idx += det_count;
+
+      assert(sz.min_singles <= single_count && single_count <= sz.max_singles && det_count <= sz.max_dets_in_config);
    }
 }
 
 bool KSBlockIterator::next_S_block()
 {
+   assert(KS_configs.size() <= sz.KS_block_config_count_upper_bound);
+   assert(KS_CSF_coeffs.size() <= sz.CSF_coeff_count_upper_bound);
+
    int new_idx = S_block_idx + 1;
    if(new_idx < S_count)
    {
@@ -323,7 +315,7 @@ void KSBlockIterator::init_S_block(int idx)
                 );
 
    KS_dim = std::reduce(KS_S_path_counts.begin(), KS_S_path_counts.end());
-   assert(KS_dim >= 0);
+   assert(0 <= KS_dim && KS_dim <= sz.max_KS_dim);
    K_block_CSF_count += KS_dim; // NOTE: For debug only
 
    new (&_KS_H)  MArr2R(KS_H_data, KS_dim, KS_dim);
@@ -557,13 +549,15 @@ void HubbardModel::update()
 {
    if(recompute_basis)
    {
+      itr.~KSBlockIterator();
+
       HubbardSizes new_sz = hubbard_memory_requirements(params);
-      // TODO: Implement reallocate() for ArenaAllocator and use it here if the current params require more memory
+      allocator.reserve(new_sz.workspace_size, true);
       sz = new_sz;
       assert(allocator.unused_size() >= new_sz.workspace_size);
 
-      itr.~KSBlockIterator();
       new (&itr) KSBlockIterator(params, allocator, new_sz);
+      assert(cdev.prepare(new_sz));
       recompute_basis = false;
    }
    else
@@ -662,7 +656,10 @@ HubbardSizes hubbard_memory_requirements(HubbardParams params)
       int cur_dim = SM_space_dim(params.N, params.Ns, cur_S);
       if(max_KS_dim < cur_dim) { max_KS_dim = cur_dim; }
    }
-   if(max_KS_dim > 2) { max_KS_dim /= params.Ns; }
+   if(max_KS_dim > 2 && params.Ns > 1)
+   { 
+      max_KS_dim = int(std::ceil(float(max_KS_dim)/float(params.Ns - 1)));
+   }
 
    int min_singles = int(2.0*std::abs(params.m));
    int max_singles = (params.N <= params.Ns) ? params.N : (2*params.Ns - params.N);

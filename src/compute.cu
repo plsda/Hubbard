@@ -4,6 +4,8 @@
 #include <cusolver_common.h>
 #include <cusolverDn.h>
 
+#include <cuda.h> // For cuMemGetAddressRange
+
 #include "common.h"
 #include "allocator.h"
 #include "utils.h"
@@ -50,87 +52,90 @@ bool capture_cuda_error(cudaError_t error, int line, const char* file, ErrorStre
    return no_errors;
 }
 
-class HubbardComputeDevice::ComputeContext
+void* cuda_malloc(size_t size)
 {
-public:
-   ComputeContext(size_t device_workspace_init_size, size_t host_workspace_init_size, ErrorStream* const errors = 0) : errors(errors)
+   void* result;
+   cudaError_t error = cudaMalloc(&result, size);
+   if(error != cudaSuccess)
+   {
+      result = 0;
+      assert(!"cuda_malloc failed!");
+   }
+
+   return result;
+}
+void cuda_free(void* ptr)
+{
+   cudaError_t error = cudaFree(ptr);
+   assert("cuda_free failed!" && (error == cudaSuccess));
+}
+void* cuda_realloc(void* old_ptr, size_t size)
+{
+   void* result = 0;
+   size_t old_size; 
+   CUresult cu_result = cuMemGetAddressRange(NULL, &old_size, (CUdeviceptr)old_ptr);
+   if(cu_result == CUDA_SUCCESS)
+   {
+      result = cuda_malloc(size);
+      cudaError_t error = cudaMemcpy(result, old_ptr, std::min(old_size, size), cudaMemcpyDeviceToDevice);
+      if(error == cudaSuccess)
+      {
+         cuda_free(old_ptr);
+      }
+      else
+      {
+         cuda_free(result);
+         result = 0;
+         assert(!"cudaMemcpy failed in cuda_realloc!");
+      }
+   }
+   else
+   {
+      assert(!"cuMemGetAddressRange failed in cuda_realloc!");
+   }
+
+   return result;
+}
+
+using DArenaAllocator = allocation::ArenaAllocator<cuda_malloc, cuda_free, cuda_realloc>;
+using DArenaCheckpoint = typename DArenaAllocator::Checkpoint;
+
+struct HubbardComputeDevice::ComputeContext
+{
+   ComputeContext(size_t host_workspace_init_size, size_t device_workspace_init_size, ErrorStream* const errors = 0) :
+      errors(errors), h_arena(host_workspace_init_size), d_arena(device_workspace_init_size)
    {
       cusolverStatus_t status = cusolverDnCreate(&cusolver_handle);
       assert(status == CUSOLVER_STATUS_SUCCESS);
-
-      // TODO: Pinned memory
-      CAPTURE_CUDA_ERROR(cudaMalloc(&d_memory, device_workspace_init_size + sizeof(real) + sizeof(int)), errors);
-
-      // TODO: Alignment?
-      d_real_result = (real*)d_memory;
-      d_info        = (int* )(((u8*)d_memory) + sizeof(real));
-      d_workspace   = (void*)(((u8*)d_memory) + sizeof(real) + sizeof(int));
-
-      h_workspace = std::make_unique<u8[]>(host_workspace_init_size);
-
-      device_workspace_size = device_workspace_init_size;
-      host_workspace_size = host_workspace_init_size;
-   }
-
-   ~ComputeContext()
-   {
-      CAPTURE_CUDA_ERROR(cudaFree(d_memory), errors);
-   }
-
-   // NOTE: Workspace contents are not copied over
-   void resize_device_workspace(size_t new_size)
-   {
-      CAPTURE_CUDA_ERROR(cudaFree(d_memory), errors);
-
-      CAPTURE_CUDA_ERROR(cudaMalloc(&d_memory, new_size + sizeof(real) + sizeof(int)), errors);
-      device_workspace_size = new_size;
-
-      d_real_result = (real*)d_memory;
-      d_info        = (int* )(((u8*)d_memory) + sizeof(real));
-      d_workspace   = (void*)(((u8*)d_memory) + sizeof(real) + sizeof(int));
-   }
-
-   void resize_host_workspace(size_t new_size)
-   {
-      h_workspace.reset(new u8[new_size]);
-      host_workspace_size = new_size;
-   }
-
-   real get_real_result()
-   {
-      real result;
-      cuda_memcpy_to_host(&result, d_real_result, sizeof(real));
-      return result;
-   }
-
-   int get_info()
-   {
-      int result;
-      cuda_memcpy_to_host(&result, d_info, sizeof(int));
-      return result;
+      CAPTURE_LAST_CUDA_ERROR(errors);
    }
 
    cusolverDnHandle_t cusolver_handle;
+   ArenaAllocator h_arena;
+   DArenaAllocator d_arena;
 
-   void* d_workspace = 0;
-   real* d_real_result = 0;
-   int* d_info = 0;
-   std::unique_ptr<u8[]> h_workspace;
-   size_t device_workspace_size = 0; // In bytes
-   size_t host_workspace_size = 0;   // In bytes
-
-private:
    ErrorStream* const errors;
-   void* d_memory = 0;
 };
 
-HubbardComputeDevice::HubbardComputeDevice(ErrorStream* errors) : errors(errors)
+template<class T>
+void cuda_set(T* dest, const T* src, size_t count, ErrorStream* errors = 0)
+{
+   CAPTURE_CUDA_ERROR(cudaMemcpy(dest, src, sizeof(T)*count, cudaMemcpyHostToDevice), errors);
+}
+
+template<class T>
+T cuda_get(T* src)
+{
+   T result;
+   cudaMemcpy(&result, src, sizeof(T), cudaMemcpyDeviceToHost);
+   return result;
+}
+
+HubbardComputeDevice::HubbardComputeDevice(size_t host_workspace_init_size, size_t device_workspace_init_size, ErrorStream* errors) : errors(errors)
 {
    bool init_ok = (gpuDeviceInit(gpuGetMaxGflopsDeviceId()) >= 0);
    assert(init_ok);
 
-   size_t device_workspace_init_size = 100*1024*1024;
-   size_t host_workspace_init_size = 100*1024*1024;
    ctx = std::make_unique<ComputeContext>(device_workspace_init_size, host_workspace_init_size, errors);
 }
 
@@ -139,6 +144,82 @@ HubbardComputeDevice::~HubbardComputeDevice()
    //cudaDeviceReset();
 }
 
+ComputeMemoryReqs DnXsyevdx_memory_requirements(cusolverDnHandle_t cusolver_handle, HubbardSizes sz)
+{
+   cusolverEigMode_t  jobz  = CUSOLVER_EIG_MODE_NOVECTOR;
+   cusolverEigRange_t range = CUSOLVER_EIG_RANGE_I;
+   cublasFillMode_t   uplo  = CUBLAS_FILL_MODE_LOWER;
+
+   real* d_elements = 0;
+   real* W = 0;
+
+   int64_t dim = sz.max_KS_dim;
+   int64_t found_count;
+   int64_t lda = dim;
+   int64_t il = 1;
+   int64_t iu = 1;
+
+   size_t required_device_workspace_size;
+   size_t required_host_workspace_size;
+
+   cusolverStatus_t buffer_info_status = cusolverDnXsyevdx_bufferSize(
+       cusolver_handle,                 // cusolverDnHandle_t handle,
+       NULL,                            // cusolverDnParams_t params,
+       jobz,                            // cusolverEigMode_t jobz,
+       range,                           // cusolverEigRange_t range,
+       uplo,                            // cublasFillMode_t uplo,
+       dim,                             // int64_t n,
+       CUDA_REAL,                       // cudaDataType dataTypeA
+       d_elements,                      // void *A,
+       lda,                             // int64_t lda,
+       0,                               // void * vl,
+       0,                               // void * vu,
+       il,                              // int64_t il,
+       iu,                              // int64_t iu,
+       &found_count,                    // int64_t *meig64,
+       CUDA_REAL,                       // cudaDataType dataTypeW,
+       W,                               // void *W,
+       CUDA_COMP_TYPE,                  // cudaDataType computeType,
+       &required_device_workspace_size, // size_t *workspaceInBytesOnDevice,
+       &required_host_workspace_size    // size_t *workspaceInBytesOnHost
+   );
+
+   ComputeMemoryReqs result{};
+   result.total_device_memory_sz = required_device_workspace_size + 2*sizeof(real);
+   result.total_host_memory_sz = required_host_workspace_size + 2*sizeof(real);
+   return result;
+}
+
+ComputeMemoryReqs HubbardComputeDevice::get_memory_requirements(HubbardSizes sz)
+{
+   ComputeMemoryReqs result{};
+
+   size_t max_det_count = size_t(sz.max_dets_in_config);
+   size_t max_dim = size_t(sz.max_KS_dim);
+   size_t max_elem_count = size_t(max_dim*max_dim);
+
+   ComputeMemoryReqs DnXsyevdx_reqs = DnXsyevdx_memory_requirements(ctx->cusolver_handle, sz);
+  
+   result.total_host_memory_sz   = DnXsyevdx_reqs.total_host_memory_sz;
+   result.total_device_memory_sz = std::max(
+      2*(max_det_count + 1)*(sizeof(Det) + sizeof(real)) + 2*sizeof(real),
+      (max_elem_count + 1)*sizeof(real) + (max_dim + 1)*sizeof(real) + 2*sizeof(int) + DnXsyevdx_reqs.total_device_memory_sz
+      );
+
+   return result;
+}
+
+bool HubbardComputeDevice::prepare(HubbardSizes hsz)
+{
+   ComputeMemoryReqs csz = get_memory_requirements(hsz);
+   ctx->h_arena.reserve(csz.total_host_memory_sz, true);
+   ctx->d_arena.reserve(csz.total_device_memory_sz, true);
+
+   return (ctx->h_arena.max_size() >= csz.total_host_memory_sz) &&
+          (ctx->d_arena.max_size() >= csz.total_device_memory_sz);
+}
+
+/*
 void HubbardComputeDevice::reset()
 { 
    cudaDeviceReset();
@@ -151,6 +232,7 @@ void HubbardComputeDevice::reset()
 
    CHECK_NO_CUDA_ERRORS;
 }
+*/
 
 __device__
 static int mod(int a, int b)
@@ -308,35 +390,26 @@ real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* 
       Det*  d_ket_dets;
       real* d_ket_coeffs;
 
-      // TODO: Preallocate (one allocation)
-      cudaMalloc(&d_bra_dets,   sizeof(Det)*bra_count);
-      cudaMalloc(&d_bra_coeffs, sizeof(real)*bra_count);
-      cudaMalloc(&d_ket_dets,   sizeof(Det)*ket_count);
-      cudaMalloc(&d_ket_coeffs, sizeof(real)*ket_count);
+      DArenaCheckpoint d_cpt(ctx->d_arena);
 
-      // TODO: Store dets and coeffs interleaved in a single array
-      cuda_memcpy_to_device(d_bra_dets,   bra_dets,    sizeof(Det)*bra_count);
-      cuda_memcpy_to_device(d_bra_coeffs, bra_coeffs,  sizeof(real)*bra_count);
-      cuda_memcpy_to_device(d_ket_dets,   ket_dets,    sizeof(Det)*ket_count);
-      cuda_memcpy_to_device(d_ket_coeffs, ket_coeffs,  sizeof(real)*ket_count);
+      d_bra_dets   = ctx->d_arena.allocate<Det>(bra_count);
+      d_bra_coeffs = ctx->d_arena.allocate<real>(bra_count);
+      d_ket_dets   = ctx->d_arena.allocate<Det>(ket_count);
+      d_ket_coeffs = ctx->d_arena.allocate<real>(ket_count);
 
+      cuda_set(d_bra_dets,   bra_dets,   bra_count);
+      cuda_set(d_bra_coeffs, bra_coeffs, bra_count);
+      cuda_set(d_ket_dets,   ket_dets,   ket_count);
+      cuda_set(d_ket_coeffs, ket_coeffs, ket_count);
       CHECK_NO_CUDA_ERRORS;
 
-      real* d_result;
-      cudaMalloc(&d_result, sizeof(real));
+      real* d_result = ctx->d_arena.allocate<real>(1);
       cudaMemset(d_result, 0, sizeof(real));
       H_int_element_term<<<block_count, threads_per_block>>>(d_bra_dets, d_bra_coeffs,
                                                              d_ket_dets, d_ket_coeffs,
                                                              bra_count, params, d_result);
-
-      cuda_memcpy_to_host(&result, d_result, sizeof(result));
-      cudaFree(d_result);
+      result = cuda_get(d_result);
       result *= params.U/params.Ns;
-
-      cudaFree(d_bra_dets);
-      cudaFree(d_bra_coeffs);
-      cudaFree(d_ket_dets);
-      cudaFree(d_ket_coeffs);
 
       CHECK_NO_CUDA_ERRORS;
    }
@@ -346,11 +419,15 @@ real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* 
 
 real HubbardComputeDevice::sym_eigs_smallest(real* elements, int dim)
 {
+   DArenaCheckpoint d_cpt(ctx->d_arena);
+
    int64_t found_count;
-   real* d_elements;
-   size_t elements_sz = dim*dim*sizeof(real);
-   cudaMalloc(&d_elements, elements_sz); // TODO: Preallocate
-   cuda_memcpy_to_device(d_elements, elements, elements_sz);
+   size_t elem_count = dim*dim;
+   real* d_elements = ctx->d_arena.allocate<real>(elem_count);
+   cuda_set(d_elements, elements, elem_count);
+
+   real* W = ctx->d_arena.allocate<real>(dim);
+   int* d_info = ctx->d_arena.allocate<int>(1);
 
    cusolverEigMode_t jobz = CUSOLVER_EIG_MODE_NOVECTOR;
    cusolverEigRange_t range = CUSOLVER_EIG_RANGE_I;
@@ -377,24 +454,15 @@ real HubbardComputeDevice::sym_eigs_smallest(real* elements, int dim)
        iu,                              // int64_t iu,
        &found_count,                    // int64_t *meig64,
        CUDA_REAL,                       // cudaDataType dataTypeW,
-       ctx->d_real_result,              // void *W,
+       W,                               // void *W,
        CUDA_COMP_TYPE,                  // cudaDataType computeType,
        &required_device_workspace_size, // size_t *workspaceInBytesOnDevice,
        &required_host_workspace_size    // size_t *workspaceInBytesOnHost
    );
 
-   if(ctx->device_workspace_size < required_device_workspace_size)
-   {
-      ctx->resize_device_workspace(required_device_workspace_size);
-   }
+   void* h_workspace = (void*)ctx->h_arena.allocate<u8>(required_host_workspace_size);
+   void* d_workspace = (void*)ctx->d_arena.allocate<u8>(required_device_workspace_size);
 
-   if(ctx->host_workspace_size < required_host_workspace_size)
-   {
-      ctx->resize_host_workspace(required_host_workspace_size);
-   }
-       
-   void* W;
-   cudaMalloc(&W, dim*sizeof(real)); // TODO: Preallocate
    cusolverStatus_t status = cusolverDnXsyevdx(
        ctx->cusolver_handle,          // cusolverDnHandle_t handle,
        NULL,                          // cusolverDnParams_t params,
@@ -411,23 +479,20 @@ real HubbardComputeDevice::sym_eigs_smallest(real* elements, int dim)
        iu,                            // int64_t iu,
        &found_count,                  // int64_t *meig64,
        CUDA_REAL,                     // cudaDataType dataTypeW,
-       W,                             // void *W,
+       (void*)W,                      // void *W,
        CUDA_COMP_TYPE,                // cudaDataType computeType,
-       ctx->d_workspace,              // void *bufferOnDevice,
-       ctx->device_workspace_size,    // size_t workspaceInBytesOnDevice,
-       ctx->h_workspace.get(),        // void *bufferOnHost,
-       ctx->host_workspace_size,      // size_t workspaceInBytesOnHost,
-       ctx->d_info                    // int *info
+       d_workspace,                   // void *bufferOnDevice,
+       required_device_workspace_size,// size_t workspaceInBytesOnDevice,
+       h_workspace,                   // void *bufferOnHost,
+       required_host_workspace_size,  // size_t workspaceInBytesOnHost,
+       d_info                         // int *info
    );
-   cudaFree(d_elements);
 
-   int info = ctx->get_info();
+   int info = cuda_get(d_info);
    assert(status == CUSOLVER_STATUS_SUCCESS);
    assert(info == 0);
 
-   real result;
-   cuda_memcpy_to_host(&result, W, sizeof(result));
-   cudaFree(W);
+   real result = cuda_get(W);
 
    return result;
 }

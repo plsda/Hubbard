@@ -14,11 +14,18 @@
 
 #define TEST_E_TOL real(1e-4)
 const size_t TEST_ARENA_SIZE = 150*1024*1024;
+const size_t TEST_COMP_ARENA_SIZE = 100*1024*1024;
 
 class HubbardEnvironment : public ::testing::Environment
 {
 public:
-   HubbardEnvironment() : errors(), cdev(&errors), allocator(TEST_ARENA_SIZE) {};
+   HubbardEnvironment() :
+      errors(),
+      cdev(TEST_COMP_ARENA_SIZE, TEST_COMP_ARENA_SIZE, &errors),
+      allocator(TEST_ARENA_SIZE)
+   {
+
+   }
 
    void SetUp() override 
    {
@@ -50,7 +57,12 @@ class KBasisTest : public testing::TestWithParam<HubbardParams> {};
 class HIntTest : public testing::TestWithParam<HubbardParams>
 {
 public:
-   HIntTest() : itr(GetParam(), global_test_env->allocator, GetParam().KS_block_count()*hubbard_memory_requirements(GetParam())) {}
+   HIntTest() :
+      itr(GetParam(), global_test_env->allocator, GetParam().KS_block_count()*hubbard_memory_requirements(GetParam())),
+      cdev(hubbard_memory_requirements(GetParam()))
+   {
+
+   }
 
 protected:
    void SetUp() override;

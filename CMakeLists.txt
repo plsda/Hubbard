@@ -121,7 +121,7 @@ add_library(imgui STATIC ${imgui_sources})
 target_link_libraries(imgui PRIVATE hubbard_compiler_flags OpenGL::GL)
 target_link_libraries(imgui PUBLIC glfw)
 
-set(cusolver_libs CUDA::cusolver CUDA::cublas CUDA::cublasLt CUDA::cusparse)
+set(cusolver_libs CUDA::cusolver CUDA::cublas CUDA::cublasLt CUDA::cusparse CUDA::cuda_driver)
 target_link_libraries(hubbard_compute PRIVATE hubbard_compiler_flags hubbard_linker_flags $<IF:${use_cuda},${cusolver_libs},Eigen3::Eigen>)
 
 add_executable(hubbard src/hubbard.cpp)

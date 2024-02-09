@@ -26,7 +26,6 @@ struct HubbardParams
    HubbardParams() = default;
 
    HubbardParams(real T, real U, int Ns, int N_up, int N_down) :
-   //explicit HubbardParams(real T, real U, int Ns, int N_up, int N_down) :
       T(T), U(U), Ns(Ns), N(N_up + N_down), N_up(N_up), N_down(N_down), m(0.5*(N_up - N_down))
    {
       assert(Ns > 0 && N > 0 && N_up >= 0 && N_down >= 0 &&
@@ -64,6 +63,26 @@ struct StructuralHubbardParams : public HubbardParams
    constexpr explicit StructuralHubbardParams() {}
    constexpr explicit StructuralHubbardParams(real T, real U, int Ns, int N_up, int N_down) : HubbardParams(T, U, Ns, N_up, N_down, 1) {}
 };
+
+struct HubbardSizes
+{
+   int basis_size;
+   int min_singles;
+   int max_singles;
+   int config_count;
+   int K_block_config_count_upper_bound;
+   int KS_block_config_count_upper_bound;
+   int max_KS_dim;
+   int max_dets_in_config;
+   int max_S_paths;
+   int CSF_coeff_count_upper_bound;
+   // In bytes:
+   size_t alloc_pad; 
+   size_t unaligned_workspace_size;
+   size_t workspace_size;
+};
+HubbardSizes operator*(const HubbardSizes& sz, int n);
+HubbardSizes operator*(int n, const HubbardSizes& sz);
 
 struct SDet 
 {

@@ -16,13 +16,16 @@ int main()
 #endif
 
    ErrorStream errors;
-   HubbardComputeDevice cdev(&errors);
+   size_t host_workspace_init_size = 50*1024*1024;
+   size_t device_workspace_init_size = 50*1024*1024;
+   HubbardComputeDevice cdev(host_workspace_init_size, device_workspace_init_size, &errors);
    if(errors.has_errors)
    {
       std::cerr << errors;
       return -1;
    }
-   ArenaAllocator allocator(100*1024*1024);
+
+   ArenaAllocator allocator(1*1024*1024);
 
    ProgramState state("Hubbard", 1280, 720, allocator, cdev, errors); // NOTE: Also initializes glfw
    if(errors.has_errors)

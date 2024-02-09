@@ -231,9 +231,15 @@ struct ProgramState
 
    ScalarRange<float> T_range;
    ScalarRange<float> U_range;
-   bool force_halffilling = false;
 
    bool compute = false;
+   bool force_halffilling = false;
+   bool plot_mode = false;
+   bool plot_T_range = true;
+   bool param_input = true;
+   bool params_changed = true;
+   bool force_clear_profiling_results = false;
+
    char counter_buf[256];
    char result_E0_buf[256];
    char result_compute_time_buf[256];
@@ -241,18 +247,13 @@ struct ProgramState
 
    u64 compute_start_counter = 0;
    u64 compute_end_counter = 0;
-   bool plot_mode = false;
-   bool plot_T_range = true;
-   bool param_input = true;
-   bool params_changed = true;
-   bool force_clear_profiling_results = false;
-
    double last_compute_elapsed_s = 0;
 
    WorkQueue<4> work_queue;
    ArenaAllocator& allocator;
    TaskFuture* compute_result;
    HubbardModel model;
+   HubbardComputeDevice& cdev;
 
    std::vector<const char*> prof_labels;
    std::vector<float> prof_total;

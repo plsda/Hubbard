@@ -70,6 +70,8 @@ TaskFuture WorkQueue<thread_count>::push(std::invocable<Args...> auto f, Args&&.
 
 template<size_t thread_count> template<class... Args>
 TaskFuture WorkQueue<thread_count>::push_valcap(std::invocable<Args...> auto f, Args&&... args)
+//template<size_t thread_count> template<class F, class... Args>
+//TaskFuture WorkQueue<thread_count>::push_valcap(F f, Args&&... args)
 {
    // NOTE: Always return a value from task function
    static_assert(sizeof(f(args...)) <= sizeof(TaskResult));
@@ -82,7 +84,7 @@ TaskFuture WorkQueue<thread_count>::push_valcap(std::invocable<Args...> auto f, 
    tasks_mutex.unlock();
    
    pending.release();
-   return std::move(result);
+   return result;
 }
 
 template<size_t thread_count> template <class T, class... Args>
@@ -177,7 +179,7 @@ bool WorkQueue<thread_count>::pop(int worker_ID)
 
 ProgramState::ProgramState(const char* window_name, int window_w, int window_h, ArenaAllocator& _allocator,
                            HubbardComputeDevice& _cdev, ErrorStream& errors, ImVec4 _clear_color) :
-   clear_color(_clear_color), allocator(_allocator), model(_cdev, _allocator), _this(this)
+   clear_color(_clear_color), allocator(_allocator), model(_cdev, _allocator), cdev(_cdev), _this(this)
 {
    glfwSetErrorCallback(glfw_error_callback);
    if(!glfwInit())
@@ -314,7 +316,11 @@ void ProgramState::handle_events()
       if(params_changed)
       {
          params_sz = hubbard_memory_requirements(params);
-         format_memory(params_memory_buf, ARRAY_SIZE(params_memory_buf), params_sz.workspace_size);
+         ComputeMemoryReqs reqs = cdev.get_memory_requirements(params_sz);
+         reqs.total_host_memory_sz += params_sz.workspace_size;
+
+         size_t total_mem_sz = reqs.total_host_memory_sz + reqs.total_device_memory_sz;
+         format_memory(params_memory_buf, ARRAY_SIZE(params_memory_buf), total_mem_sz);
 
          force_clear_profiling_results = true; 
       }
@@ -399,6 +405,7 @@ void ProgramState::handle_events()
                      if((plot_T_range && params.U == 0.0) || (!plot_T_range && plotting_U_range.includes(0.0)))
                      {
                         if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
+
                         e.comp_status = work_queue.push_valcap(plot_work_proc<BCS>, _this, plotting_T_range, eidx, true,
                                                                noninteracting_E0, BCS::PERIODIC);
                         if(plot_T_range)
@@ -623,7 +630,7 @@ void ProgramState::render_UI()
 
       param_input = param_input | ImGui::Checkbox("Half-filling", &force_halffilling);
 
-      ImGui::Text("Min memory (excl. VRAM): "); // Excludes memory allocated in compute.lib
+      ImGui::Text("Min memory (incl. VRAM): ");
       ImGui::SameLine();
       ImGui::Text(params_memory_buf);
    }
