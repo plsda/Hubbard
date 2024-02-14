@@ -21,6 +21,7 @@ using ::testing::Not;
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(KBasisTest);
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(HIntTest);
 
+#if 1
 //            T   U   Ns N_up N_dn
 KS_BASIS_TEST(1, 2.7, 5,   1,  1)
 KS_BASIS_TEST(1, 2.7, 5,   1,  2)
@@ -44,7 +45,9 @@ INSTANTIATE_TEST_SUITE_P(KBasisTest_small, KBasisTest,
                               HubbardParams(1, 2.7, 7,   4,  3),
                               HubbardParams(1, 2.7, 9,   4,  4)
                           ));
+#endif
 
+#if 1
 INSTANTIATE_TEST_SUITE_P(HIntTest_small, HIntTest,
                          testing::Values(
                               //            T   U   Ns N_up N_dn
@@ -58,6 +61,7 @@ INSTANTIATE_TEST_SUITE_P(HIntTest_small, HIntTest,
                               HubbardParams(1, 2.7, 7,   4,  3)
                               //,HubbardParams(5.2, 3.8, 9, 4,  4)
                           ));
+#endif
 
 #define set_up_KS_configs(...) ASSERT_NO_FATAL_FAILURE(EXPAND(__set_up_KS_configs(__VA_ARGS__)));
 void __set_up_KS_configs(KSBlockIterator& itr, const HubbardParams& params)
@@ -279,10 +283,38 @@ void HIntTest::SetUp()
 
 TEST_P(HIntTest, test_Hint)
 {
-   // NOTE: Verify that H_int_element gives a symmetric (real) matrix with reasonable cofficients
+   // NOTE: Verify that H_int_element gives a symmetric (real) matrix (CPU version only) with reasonable cofficients
 
    const HubbardParams& params = GetParam();
 
+#ifdef HUBBARD_USE_CUDA
+   HubbardSizes sz = params.KS_block_count()*hubbard_memory_requirements(params);
+   ArenaAllocator& allocator = global_test_env->allocator;
+
+   ArenaCheckpoint cpt(allocator);
+   ArenaCheckpoint* d_cpt;
+   cdev.begin_device_memory(d_cpt);
+
+   int det_count = itr.KS_CSF_coeffs.size();
+   WeightedDet* csf_basis = cdev.dev_allocate<WeightedDet>(det_count);
+   int* csf_indices = cdev.dev_allocate<int>(itr.KS_dim + 1); 
+   interleave_KS_basis(itr, csf_basis, csf_indices);
+
+   cdev.H_int(itr.KS_H().data(), itr.KS_dim, csf_basis, det_count, csf_indices, params);
+
+   cdev.end_device_memory(d_cpt);
+   csf_basis = 0;
+   csf_indices = 0;
+
+   for(auto csf1 : itr.KS_basis())
+   {
+      for(auto csf2 : itr.KS_basis(csf1))
+      {
+         ASSERT_LE(std::abs(itr.KS_H(csf1, csf2)), (params.U/params.Ns)*params.Ns*params.Ns*params.Ns*itr.CSF_size(csf1)*itr.CSF_size(csf2));
+      }
+   }
+
+#else
    for(auto csf1 : itr.KS_basis())
    {
       for(auto csf2 : itr.KS_basis())
@@ -298,8 +330,10 @@ TEST_P(HIntTest, test_Hint)
          ASSERT_LE(std::abs(H_KS_rc), (params.U/params.Ns)*params.Ns*params.Ns*params.Ns*itr.CSF_size(csf1)*itr.CSF_size(csf2));
       }
    }
+#endif
 }
 
+#if 1
 TEST(SolverTest, test_dimer_E0)
 {
    std::vector<HubbardParams> params = 
@@ -335,6 +369,7 @@ TEST(SolverTest, test_atomic_E0)
       HubbardParams(0, 8.3, 7,  2,   5),
       HubbardParams(0,-2.7, 7,  2,   5),
       HubbardParams(0, 5,   9,  4,   4),
+      //HubbardParams(0, 5.2, 10,  4,   5),
    };
 
    for(const HubbardParams& p : params)
@@ -357,6 +392,7 @@ TEST(SolverTest, test_noninteracting_E0)
       HubbardParams(7,   0, 7,  5,   2),
       HubbardParams(4.2, 0, 7,  2,   5),
       HubbardParams(5,   0, 9,  4,   4),
+      //HubbardParams(5.2, 0, 10,  4,   5),
    };
 
    for(const HubbardParams& p : params)
@@ -412,6 +448,7 @@ TEST(QuadTest, test_quad)
       EXPECT_NEAR(result, ground_truth, real(1e-6));
    }
 }
+#endif
 
 //int main(int argc, char **argv)
 //{

@@ -107,7 +107,7 @@ cpt(_allocator, sz.workspace_size),
 #endif
    _KS_H(MArr2R(NULL, 0, 0))
 { 
-   KS_H_data = allocator->allocate<real>(sz.max_KS_dim, REAL_EIGEN_ALIGNMENT);
+   KS_H_data = allocator->allocate<real>(sz.max_KS_dim*sz.max_KS_dim, REAL_EIGEN_ALIGNMENT);
 
    form_K_basis(basis, K_block_sizes, params);
    sort_K_basis(basis, K_block_sizes, params);
@@ -492,6 +492,30 @@ real halffilled_E(const HubbardParams& params, IntArgs int_args)
    return -4.0*Ns*T*integ;
 }
 
+void interleave_KS_basis(KSBlockIterator& itr, WeightedDet* result_basis, int* result_indices)
+{
+   int det_count = itr.KS_CSF_coeffs.size();
+   result_indices[itr.KS_dim] = det_count;
+
+   int csf_idx = 0;
+   WeightedDet* cur_det = result_basis;
+   for(auto csf : itr.KS_basis())
+   {
+      int count = itr.CSF_size(csf);
+      const Det* dets = itr.CSF_dets(csf);
+      const real* coeffs = itr.CSF_coeffs(csf);
+
+      for(int i = 0; i < count; i++)
+      {
+         cur_det->det = dets[i];
+         cur_det->coeff = coeffs[i];
+         cur_det++;
+      }
+      result_indices[csf_idx++] = csf.first_coeff_idx;
+   }
+   assert(csf_idx == itr.KS_dim);
+}
+
 
 HubbardModel::HubbardModel(HubbardComputeDevice& _cdev, ArenaAllocator& _allocator) :
    sz({}), allocator(_allocator), cdev(_cdev), itr(allocator), recompute_E(true), recompute_basis(false) { }
@@ -590,24 +614,43 @@ real HubbardModel::E0()
    if(!recompute_E) { return _E0; }
    update();
 
-   real min_E = std::numeric_limits<real>::max();
+   cdev.begin_compute();
 
+   real min_E = std::numeric_limits<real>::max();
+   int asd = 0;
    for(itr.reset(); itr; ++itr) 
    {
       if(itr.KS_dim == 0) { continue; }
 
       {TIME_SCOPE("Matrix");
       // H_int
+#ifdef HUBBARD_USE_CUDA
+      ArenaCheckpoint cpt(allocator);
+      ArenaCheckpoint* d_cpt;
+      cdev.begin_device_memory(d_cpt);
+
+      int det_count = itr.KS_CSF_coeffs.size();
+      WeightedDet* csf_basis = cdev.dev_allocate<WeightedDet>(det_count);
+      int* csf_indices = cdev.dev_allocate<int>(itr.KS_dim + 1); 
+      interleave_KS_basis(itr, csf_basis, csf_indices);
+
+      cdev.H_int(itr.KS_H().data(), itr.KS_dim, csf_basis, det_count, csf_indices, params);
+
+      cdev.end_device_memory(d_cpt);
+      csf_basis = 0;
+      csf_indices = 0;
+#else
       for(auto csf1 : itr.KS_basis())
       {
          for(auto csf2 : itr.KS_basis(csf1))
          {
             real cur_elem = H_int(csf1, csf2);
             itr.KS_H(csf1, csf2) += cur_elem;
-            itr.KS_H(csf2, csf1) += cur_elem; // can comment out this and
+            itr.KS_H(csf2, csf1) += cur_elem;
          }
-         itr.KS_H(csf1, csf1) *= real(0.5); // this if can safely assume that HubbardComputeDevice expects either only the upper (or lower) triangular part of KS_H to be stored
+         itr.KS_H(csf1, csf1) *= real(0.5);
       }
+#endif
 
       // H_0
       int col_idx = 0;
@@ -638,6 +681,8 @@ real HubbardModel::E0()
          min_E = E0;
       }
    }
+
+   cdev.end_compute();
 
    recompute_E = false;
    _E0 = min_E;

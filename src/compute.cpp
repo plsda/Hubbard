@@ -9,13 +9,15 @@
 
 class HubbardComputeDevice::ComputeContext {};
 
-HubbardComputeDevice::HubbardComputeDevice(size_t host_workspace_init_size, size_t device_workspace_init_size, ErrorStream* _errors) : errors(_errors) {}
+HubbardComputeDevice::HubbardComputeDevice(size_t device_workspace_init_size, ArenaAllocator& alloc, ErrorStream* _errors) : errors(_errors), h_arena(alloc) {}
 
 HubbardComputeDevice::~HubbardComputeDevice() {}
 
 ComputeMemoryReqs HubbardComputeDevice::get_memory_requirements(HubbardSizes) { return ComputeMemoryReqs{}; }
-void HubbardComputeDevice::prepare(HubbardSizes) {}
-//void HubbardComputeDevice::reset() {}
+bool HubbardComputeDevice::prepare(HubbardSizes) { return true; }
+
+bool HubbardComputeDevice::begin_compute() { return true; }
+bool HubbardComputeDevice::end_compute() { return true; }
 
 real HubbardComputeDevice::H_int_element(const Det* const bra_dets, const real* const bra_coeffs, int bra_count, 
                                          const Det* const ket_dets, const real* const ket_coeffs, int ket_count,

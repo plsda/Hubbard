@@ -70,7 +70,7 @@ elseif((CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR (CMAKE_CXX_COMPILER_ID STREQU
    set_link_flags(DEBUG,RELEASE CXX,CUDA "LINKER:${clang_common_linker_flags}")
 endif()
 
-set(cuda_common_compiler_flags --diag-suppress=20039,20040 --expt-relaxed-constexpr -Werror=all-warnings)
+set(cuda_common_compiler_flags --diag-suppress=20039,20040,177 --expt-relaxed-constexpr -Werror=all-warnings)
 set(cuda_common_linker_flags "")
 set_comp_flags(DEBUG,RELEASE CUDA "${cuda_common_compiler_flags}")
 set_link_flags(DEBUG,RELEASE CUDA "LINKER:${cuda_common_linker_flags}")
@@ -107,8 +107,9 @@ target_include_directories(hubbard_compiler_flags INTERFACE "$<BUILD_INTERFACE:$
 include_directories("${PROJECT_SOURCE_DIR}/src")
 
 # The code is built as a unity build except for hubbard_compute and ImGUI, which are separated into their own translation units
-add_library(hubbard_compute OBJECT $<IF:${use_cuda},src/compute.cu,src/compute.cpp>)
-#set_target_properties(hubbard_compute PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+#add_library(hubbard_compute OBJECT $<IF:${use_cuda},src/compute.cu,src/compute.cpp>) # This doesn't seem to play nice with CUDA_SEPARABLE_COMPILATION: causes unresolved externals if compiling CUDA with separable compilation
+add_library(hubbard_compute STATIC $<IF:${use_cuda},src/compute.cu,src/compute.cpp>)
+set_target_properties(hubbard_compute PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 # NOTE: If, for some reason, files are added to/removed from the imgui or implot directories, have to reconfigure for the changes to be detected
 file(GLOB imgui_sources

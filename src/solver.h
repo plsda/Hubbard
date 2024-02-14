@@ -50,6 +50,7 @@ real noninteracting_E0(const HubbardParams& params, BCS bcs);
 real dimer_E0(const HubbardParams& params, BCS bcs);
 real atomic_E0(const HubbardParams& params);
 real halffilled_E_per_N(real T, real U, IntArgs int_args);
+void interleave_KS_basis(KSBlockIterator& itr, WeightedDet* result_basis, int* result_indices);
 HubbardSizes hubbard_memory_requirements(HubbardParams params);
 Det get_config_ref_det(const std::span<Det>& config);
 
@@ -205,6 +206,9 @@ public:
       KS_spins.insert(KS_spins.end(), other.KS_spins.cbegin(), other.KS_spins.cend());
 
       KS_dim += other.KS_dim;
+
+      new (&_KS_H)  MArr2R(KS_H_data, KS_dim, KS_dim);
+      _KS_H.setZero();
    }
    void copy_basis(KSBlockIterator& other)
    {

@@ -2,10 +2,15 @@
 
 namespace allocation
 {
+   void* nop_alloc(size_t);
+   void  nop_free(void*);
+   void* nop_realloc(void*, size_t);
+   void* forbidden_realloc(void*, size_t);
+
    template<auto _Alloc = std::malloc, auto _Free = std::free, auto _Realloc = std::realloc> class ArenaAllocator;
    template<auto _Alloc = std::malloc, auto _Free = std::free, auto _Realloc = std::realloc> struct ArenaCheckpoint;
    template<class T> class StdArenaAllocatorWrapper;
-   
+ 
    // Prevents the global ArenaCheckpoint sentinel from being destructed
    class GlobalSentinel
    {
@@ -69,32 +74,6 @@ namespace allocation
          return (T*)result;
       }
       
-      // Pointer arithmetic below may lead to undefined behavior if in_p is not a pointer obtained from this allocator.
-      template <class T>
-      void deallocate(T* in_p, size_type count) 
-      {
-         pointer p = (pointer)in_p;
-         assert((p >= memory) && ((p - memory) == sizeof(T)*count));
-         deallocate(p);
-      }
-      
-      template <class T>
-      void deallocate(T* in_p)
-      {
-         if(in_p != nullptr)
-         {
-            pointer p = (pointer)in_p;
-            if(memory <= p && p < (memory + total_size))
-            {
-               remaining_size = p - memory;
-            }
-            else
-            {
-               assert(!"Invalid pointer passed to deallocate!");
-            }
-         }
-      }
-
       template <class T>
       size_type get_aligned_size(size_type count)
       {
@@ -296,7 +275,13 @@ namespace allocation
 #undef _Free
 #undef _Realloc
    };
-   
+
+   // Remove the checkpoint, but don't necessarily change allocator state/release memory
+   template<auto A, auto F, auto R>
+   void clear_checkpoint(ArenaCheckpoint<A, F, R>* cpt) 
+   {
+      cpt->~ArenaCheckpoint();
+   }
 };
 
 using ArenaAllocator  = allocation::ArenaAllocator<>;
