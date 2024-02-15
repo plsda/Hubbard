@@ -161,6 +161,9 @@ public:
    template<class... Args>
    TaskFuture push_valcap(std::invocable<Args...> auto f, Args&&... args);
 
+   template<class... Args>
+   TaskFuture push_forwarding(auto (*f)(Args...), const std::type_identity_t<Args>&... args);
+
    template<class T, class... Args>
    TaskFuture push(T& t, auto (T::*f)(Args...), Args&&... args);
 
@@ -169,6 +172,12 @@ public:
    void cancel_task(TaskFuture& f);
 
 private:
+   template<class T>
+   TaskFuture push_task(T&& t);
+
+   template<size_t... I, class... Args>
+   TaskFuture __push_forwarding(auto (*f)(Args...), std::index_sequence<I...>, const std::type_identity_t<Args>&... args);
+
    std::deque<Task> tasks;
    std::mutex tasks_mutex;
    std::counting_semaphore<std::numeric_limits<std::ptrdiff_t>::max()> pending{0};

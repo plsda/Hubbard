@@ -51,53 +51,47 @@ void worker_proc(std::stop_token s, WorkQueue<thread_count>* const q, const int 
 template<size_t thread_count>
 WorkQueue<thread_count>::WorkQueue() : workers{make_enumerated_carray<std::jthread, thread_count>(worker_proc<thread_count>, this)} { }
 
+template<size_t thread_count> template<class T>
+TaskFuture WorkQueue<thread_count>::push_task(T&& t)
+{
+   tasks_mutex.lock();
+   int task_ID = gen_task_ID();
+   tasks.emplace_back(task_ID, t);
+   TaskFuture result(tasks.back(), task_ID);
+   tasks_mutex.unlock();
+
+   pending.release();
+   return result;
+}
+
 template<size_t thread_count> template<class... Args>
 TaskFuture WorkQueue<thread_count>::push(std::invocable<Args...> auto f, Args&&... args)
 {
-   // NOTE: Always return a value from task function
-   static_assert(sizeof(f(args...)) <= sizeof(TaskResult));
+   return push_task([&]() { return TaskResult{f(args...)}; });
+}
 
-   tasks_mutex.lock();
-   int task_ID = gen_task_ID();
-   // NOTE: Capturing by reference
-   tasks.emplace_back(task_ID, [&]() { return TaskResult{f(args...)}; });
-   TaskFuture result(tasks.back(), task_ID);
-   tasks_mutex.unlock();
-   
-   pending.release();
-   return result;
+template<size_t thread_count> template<class... Args>
+TaskFuture WorkQueue<thread_count>::push_forwarding(auto (*f)(Args...), const std::type_identity_t<Args>&... args)
+{
+   return __push_forwarding(f, std::make_index_sequence<sizeof...(Args)>{}, args...);
+}
+
+template<size_t thread_count> template<size_t... I, class... Args>
+TaskFuture WorkQueue<thread_count>::__push_forwarding(auto (*f)(Args...), std::index_sequence<I...>, const std::type_identity_t<Args>&... args)
+{
+   return push_task([f, a = std::tuple<Args...>(const_cast<Args&>(args)...)]() { return TaskResult{f(std::get<I>(a)...)}; });
 }
 
 template<size_t thread_count> template<class... Args>
 TaskFuture WorkQueue<thread_count>::push_valcap(std::invocable<Args...> auto f, Args&&... args)
 {
-   // NOTE: Always return a value from task function
-   static_assert(sizeof(f(args...)) <= sizeof(TaskResult));
-
-   tasks_mutex.lock();
-   int task_ID = gen_task_ID();
-   // NOTE: Capturing by value
-   tasks.emplace_back(task_ID, [=]() { return TaskResult{f(args...)}; });
-   TaskFuture result(tasks.back(), task_ID);
-   tasks_mutex.unlock();
-   
-   pending.release();
-   return result;
+   return push_task([=]() { return TaskResult{f(args...)}; });
 }
 
 template<size_t thread_count> template <class T, class... Args>
 TaskFuture WorkQueue<thread_count>::push(T& t, auto (T::*f)(Args...), Args&&... args)
 {
-   static_assert(sizeof((t.*f)(args...)) <= sizeof(TaskResult));
-
-   tasks_mutex.lock();
-   int task_ID = gen_task_ID();
-   tasks.emplace_back(task_ID, [&t, f, args...]() { return TaskResult{(t.*f)(args...)}; });
-   TaskFuture result(tasks.back(), task_ID);
-   tasks_mutex.unlock();
-   
-   pending.release();
-   return result;
+   return push_task([&t, f, args...]() { return TaskResult{(t.*f)(args...)}; });
 }
 
 template<size_t thread_count>
@@ -230,7 +224,7 @@ ProgramState::ProgramState(const char* window_name, int window_w, int window_h, 
 
    params = {in_T, in_U, in_Ns, in_N_up, in_N_dn};
    params_sz = hubbard_memory_requirements(params);
-   T_range = {.interval = {0.1f, 1.0f}, .dim = 10};
+   T_range = {.interval = {0.0f, 1.0f}, .dim = 10};
    U_range = {.interval = {0.0f, 1.0f}, .dim = 10};
    int_args = {.lower = 1e-8, .upper = 100, .abs_tol = 1e-8, .rel_tol = 1e-6, .min_steps = 2, .max_steps = 60};
 
@@ -242,8 +236,8 @@ ProgramState::ProgramState(const char* window_name, int window_w, int window_h, 
    plot_elements.reserve(size_t(PLOT_QUANTITY::COUNT));
    plot_elements.push_back({.value_type = PLOT_QUANTITY::COMPUTED_E, .type = PLOT_TYPE::LINE,    .legend = "Computed",            .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
    plot_elements.push_back({.value_type = PLOT_QUANTITY::DIMER_E,    .type = PLOT_TYPE::LINE,    .legend = "Dimer, ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
-   plot_elements.push_back({.value_type = PLOT_QUANTITY::NONINT_E,   .type = PLOT_TYPE::SCATTER, .legend = "U = 0, ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
-   plot_elements.push_back({.value_type = PLOT_QUANTITY::ATOMIC_E,   .type = PLOT_TYPE::SCATTER, .legend = "T = 0, ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::NONINT_E,   .type = PLOT_TYPE::SCATTER, .legend = "Noninteracting (U = 0), ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::ATOMIC_E,   .type = PLOT_TYPE::SCATTER, .legend = "Atomic limit (T = 0), ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
    plot_elements.push_back({.value_type = PLOT_QUANTITY::HF_E,       .type = PLOT_TYPE::LINE,    .legend = "Half-filling, asymptotic (Lieb & Wu)", .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
    compute_result = &plot_elements[0].comp_status; // plot_elements should not be resized after this without updating compute_result pointer!
 }
@@ -266,8 +260,8 @@ bool ProgramState::is_running()
    return !glfwWindowShouldClose(window);
 }
 
-template<class... Args>
-int plot_work_proc(ProgramState* s, ScalarRange<real> domain, int eidx, bool plot_T_range, real(*E)(const HubbardParams&, Args...), Args... args)
+template<auto E, class... Args> requires std::invocable<decltype(E), const HubbardParams&, Args...>
+int plot_work_proc(ProgramState* s, ScalarRange<real> domain, int eidx, bool plot_T_range, Args... args)
 {
    HubbardParams params = s->params;
    std::vector<real>& result = s->plot_elements[eidx].y;
@@ -363,21 +357,21 @@ void ProgramState::handle_events()
                   case PLOT_QUANTITY::COMPUTED_E: 
                   {
                      e.y.reserve(plotting_range.dim);
-                     e.comp_status = work_queue.push_valcap([](ProgramState* s, ScalarRange<real> plotting_range, int eidx, bool plot_T_range)
-                                                            {
-                                                               HubbardParams params = s->params;
-                                                               std::vector<real>& result = s->plot_elements[eidx].y;
-                                                               real& x_param = plot_T_range ? params.T : params.U;
-                                                               for(real val : plotting_range)
-                                                               {
-                                                                  s->compute_start_counter = glfwGetTimerValue();
-                                                                  x_param = val;
-                                                                  result.push_back(s->model.set_params(params).E0()/real(params.Ns));
-                                                                  s->compute_end_counter = glfwGetTimerValue();
-                                                                  s->last_compute_elapsed_s = get_s_elapsed(s->compute_start_counter, s->compute_end_counter, s->timer_freq);
-                                                               }
-                                                               return 0;
-                                                            }, _this, plotting_range, eidx, plot_T_range);
+                     e.comp_status = work_queue.push_forwarding(+[](ProgramState* s, ScalarRange<real> plotting_range, int eidx, bool plot_T_range)
+                                                                {
+                                                                   HubbardParams params = s->params;
+                                                                   std::vector<real>& result = s->plot_elements[eidx].y;
+                                                                   real& x_param = plot_T_range ? params.T : params.U;
+                                                                   for(real val : plotting_range)
+                                                                   {
+                                                                      s->compute_start_counter = glfwGetTimerValue();
+                                                                      x_param = val;
+                                                                      result.push_back(s->model.set_params(params).E0()/real(params.Ns));
+                                                                      s->compute_end_counter = glfwGetTimerValue();
+                                                                      s->last_compute_elapsed_s = get_s_elapsed(s->compute_start_counter, s->compute_end_counter, s->timer_freq);
+                                                                   }
+                                                                   return 0;
+                                                                }, _this, plotting_range, eidx, plot_T_range);
                      e.show = true;
                   } break;
 
@@ -390,8 +384,8 @@ void ProgramState::handle_events()
                         e.y.reserve(plotting_range.dim);
 
                         if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
-                        e.comp_status = work_queue.push_valcap(plot_work_proc<BCS>, _this, plotting_range, eidx, plot_T_range, 
-                                                               dimer_E0, BCS::PERIODIC);
+                        e.comp_status = work_queue.push_forwarding(plot_work_proc<dimer_E0, BCS>, _this, plotting_range, eidx, plot_T_range, 
+                                                                   BCS::PERIODIC);
                         e.show = true;
                      }
                   } break;
@@ -404,8 +398,9 @@ void ProgramState::handle_events()
                      {
                         if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
 
-                        e.comp_status = work_queue.push_valcap(plot_work_proc<BCS>, _this, plotting_T_range, eidx, true,
-                                                               noninteracting_E0, BCS::PERIODIC);
+                        e.comp_status = work_queue.push_forwarding(plot_work_proc<noninteracting_E0, BCS>, _this, plotting_T_range, eidx, true,
+                                                                   BCS::PERIODIC);
+
                         if(plot_T_range)
                         {
                            e.x = &plot_x_vals;
@@ -425,8 +420,7 @@ void ProgramState::handle_events()
                      if((!plot_T_range && params.T == 0.0) || (plot_T_range && plotting_T_range.includes(0.0)))
                      {
                         if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
-                        e.comp_status = work_queue.push_valcap(plot_work_proc<>, _this, plotting_U_range, eidx, false,
-                                                               atomic_E0);
+                        e.comp_status = work_queue.push_forwarding(plot_work_proc<atomic_E0>, _this, plotting_U_range, eidx, false);
                         if(plot_T_range)
                         {
                            e.x = &ZERO_FVEC;
@@ -447,8 +441,8 @@ void ProgramState::handle_events()
                         e.y.reserve(plotting_range.dim);
 
                         if(e.comp_status.is_valid()) { e.comp_status.get<int>(); }
-                        e.comp_status = work_queue.push_valcap(plot_work_proc<IntArgs>, _this, plotting_range, eidx, plot_T_range,
-                                                               halffilled_E, int_args);
+                        e.comp_status = work_queue.push_forwarding(plot_work_proc<halffilled_E, IntArgs>, _this, plotting_range, eidx, plot_T_range,
+                                                                   int_args);
                         e.show = true;
                      }
                   } break;
