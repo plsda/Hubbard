@@ -452,9 +452,6 @@ real halffilled_E_per_N(real T, real U, IntArgs int_args)
       real exp_arg = -2.0*y*x;
       int intpart = int(exp_arg);
       real ipow = (intpart >= 0) ? 1.0/(1 << intpart) : (1 << std::abs(intpart));
-      // TODO: Could take log, break the integral into two parts so that in one part can approximate log(1 + exp(x))
-      //       as a linear function (when x is large), and in the other part can compute as is since x is small.
-      //       Finally, take exp and integrate.
 
       return J0*J1*ipow/(x*(ipow + std::exp(exp_arg - intpart*LOG2)));
    };
@@ -482,9 +479,10 @@ real halffilled_E(const HubbardParams& params, IntArgs int_args)
       double J1 = std::cyl_bessel_j(1, x);
 
       double exp_arg = -2.0*y*x;
+
       int intpart = int(exp_arg);
-      double ipow = (intpart >= 0) ? 1.0/(1 << intpart) : (1 << std::abs(intpart));
-      return J0*J1*ipow/(x*(ipow + std::exp(exp_arg - intpart*LOG2)));
+      double ipow = (intpart >= 0) ? 1.0/double(1 << intpart) : double(1 << std::abs(intpart));
+      return J0*J1*ipow/(x*(ipow + std::exp(exp_arg - double(intpart)*LOG2)));
    };
 
    double integ = quad(integrand, int_args);
@@ -693,33 +691,33 @@ HubbardSizes hubbard_memory_requirements(HubbardParams params)
 {
    real S_min = std::abs(params.m);
    real S_max = 0.5*params.N;
-   int S_count = (S_max - S_min) + 1;
-   int max_KS_dim = 0;
-   for(int i = 0; i < S_count; i++)
+   s64 S_count = (S_max - S_min) + 1;
+   s64 max_KS_dim = 0;
+   for(s64 i = 0; i < S_count; i++)
    {
       real cur_S = S_min + i;
-      int cur_dim = SM_space_dim(params.N, params.Ns, cur_S);
+      s64 cur_dim = SM_space_dim(params.N, params.Ns, cur_S);
       if(max_KS_dim < cur_dim) { max_KS_dim = cur_dim; }
    }
    if(max_KS_dim > 2 && params.Ns > 1)
    { 
-      max_KS_dim = int(std::ceil(float(max_KS_dim)/float(params.Ns - 1)));
+      max_KS_dim = s64(std::ceil(float(max_KS_dim)/float(params.Ns - 1)));
    }
 
-   int min_singles = int(2.0*std::abs(params.m));
-   int max_singles = (params.N <= params.Ns) ? params.N : (2*params.Ns - params.N);
+   s64 min_singles = s64(2.0*std::abs(params.m));
+   s64 max_singles = (params.N <= params.Ns) ? params.N : (2*params.Ns - params.N);
 
    real max_csv_S = S_min;
-   int max_S_paths = ((max_csv_S == 0) && (max_singles == 0)) ? 1 : CSV_dim(max_csv_S, max_singles);
+   s64 max_S_paths = ((max_csv_S == 0) && (max_singles == 0)) ? 1 : CSV_dim(max_csv_S, max_singles);
    while(++max_csv_S <= S_max && max_S_paths < CSV_dim(max_csv_S, max_singles)) 
    {
       max_S_paths = CSV_dim(max_csv_S, max_singles);
    }
 
-   int max_dets_in_config = 0;
-   for(int single_count = min_singles; single_count <= max_singles; single_count += 2)
+   s64 max_dets_in_config = 0;
+   for(s64 single_count = min_singles; single_count <= max_singles; single_count += 2)
    {
-      int cur_count = dets_per_orbital_config(single_count, params);
+      s64 cur_count = dets_per_orbital_config(single_count, params);
       if(max_dets_in_config < cur_count) { max_dets_in_config = cur_count; }
    }
 
@@ -729,12 +727,12 @@ HubbardSizes hubbard_memory_requirements(HubbardParams params)
       .min_singles                       = min_singles,
       .max_singles                       = max_singles,
       .config_count                      = config_count(params),
-      .K_block_config_count_upper_bound  = ((params.Ns > 1) ? int(std::ceil(float(result.config_count)/float(params.Ns - 1))) : result.config_count),
+      .K_block_config_count_upper_bound  = ((params.Ns > 1) ? s64(std::ceil(float(result.config_count)/float(params.Ns - 1))) : result.config_count),
       .KS_block_config_count_upper_bound = result.K_block_config_count_upper_bound,
       .max_KS_dim                        = max_KS_dim,
       .max_dets_in_config                = max_dets_in_config,
       .max_S_paths                       = max_S_paths,
-      .CSF_coeff_count_upper_bound       = result.KS_block_config_count_upper_bound*result.max_S_paths*result.max_dets_in_config,
+      .CSF_coeff_count_upper_bound       = std::min(result.basis_size, result.KS_block_config_count_upper_bound*result.max_S_paths*result.max_dets_in_config),
       .alloc_pad = 16,
       // TODO: Not all of these need to be available/allocated simultaneously and true required size might be less
       .unaligned_workspace_size          = 

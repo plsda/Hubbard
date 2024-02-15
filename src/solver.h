@@ -2,7 +2,7 @@
 
 #include <numbers>
 #define PI std::numbers::pi_v<real>
-#define LOG2 std::numbers::log2e_v<real>
+#define LOG2 std::numbers::ln2_v<real>
 
 #include <Eigen/Dense>
 using MatR = Eigen::Matrix<real, Eigen::Dynamic, Eigen::Dynamic>;

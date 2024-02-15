@@ -66,16 +66,16 @@ struct StructuralHubbardParams : public HubbardParams
 
 struct HubbardSizes
 {
-   int basis_size;
-   int min_singles;
-   int max_singles;
-   int config_count;
-   int K_block_config_count_upper_bound;
-   int KS_block_config_count_upper_bound;
-   int max_KS_dim;
-   int max_dets_in_config;
-   int max_S_paths;
-   int CSF_coeff_count_upper_bound;
+   s64 basis_size;
+   s64 min_singles;
+   s64 max_singles;
+   s64 config_count;
+   s64 K_block_config_count_upper_bound;
+   s64 KS_block_config_count_upper_bound;
+   s64 max_KS_dim;
+   s64 max_dets_in_config;
+   s64 max_S_paths;
+   s64 CSF_coeff_count_upper_bound;
    // In bytes:
    size_t alloc_pad; 
    size_t unaligned_workspace_size;

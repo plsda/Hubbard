@@ -6,7 +6,7 @@ void ProfilingStats::accumulate(timedt pt)
    { 
       min = t; 
    }
-   else if(t > max)
+   if(t > max)
    { 
       max = t; 
    }

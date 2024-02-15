@@ -26,7 +26,7 @@ int main()
       return -1;
    }
 
-   ProgramState state("Hubbard", 1280, 720, allocator, cdev, errors); // NOTE: Also initializes glfw
+   ProgramState state("Hubbard", 1920, 1080, allocator, cdev, errors);
    if(errors.has_errors)
    {
       std::cerr << errors;

@@ -70,8 +70,6 @@ TaskFuture WorkQueue<thread_count>::push(std::invocable<Args...> auto f, Args&&.
 
 template<size_t thread_count> template<class... Args>
 TaskFuture WorkQueue<thread_count>::push_valcap(std::invocable<Args...> auto f, Args&&... args)
-//template<size_t thread_count> template<class F, class... Args>
-//TaskFuture WorkQueue<thread_count>::push_valcap(F f, Args&&... args)
 {
    // NOTE: Always return a value from task function
    static_assert(sizeof(f(args...)) <= sizeof(TaskResult));
@@ -193,7 +191,8 @@ ProgramState::ProgramState(const char* window_name, int window_w, int window_h, 
    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 
-   window = glfwCreateWindow(window_w, window_h, window_name, NULL, NULL);
+   const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
+   window = glfwCreateWindow(std::min(window_w, mode->width), std::min(window_h, mode->height), window_name, NULL, NULL);
    if(!window)
    {
       errors << "glfCreateWindow failed.";
@@ -244,10 +243,9 @@ ProgramState::ProgramState(const char* window_name, int window_w, int window_h, 
    plot_elements.push_back({.value_type = PLOT_QUANTITY::COMPUTED_E, .type = PLOT_TYPE::LINE,    .legend = "Computed",            .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
    plot_elements.push_back({.value_type = PLOT_QUANTITY::DIMER_E,    .type = PLOT_TYPE::LINE,    .legend = "Dimer, ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
    plot_elements.push_back({.value_type = PLOT_QUANTITY::NONINT_E,   .type = PLOT_TYPE::SCATTER, .legend = "U = 0, ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
-   plot_elements.push_back({.value_type = PLOT_QUANTITY::ATOMIC_E,   .type = PLOT_TYPE::SCATTER, .legend = "T = 0, ground truth",    .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
-   plot_elements.push_back({.value_type = PLOT_QUANTITY::HF_E,       .type = PLOT_TYPE::LINE,    .legend = "Half-filling, asymp. (Lieb & Wu)",  .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::ATOMIC_E,   .type = PLOT_TYPE::SCATTER, .legend = "T = 0, ground truth", .show = false, .enabled = false, .marker_style = ImPlotMarker_Circle, .x = &plot_x_vals, .y = {}, .comp_status = {}});
+   plot_elements.push_back({.value_type = PLOT_QUANTITY::HF_E,       .type = PLOT_TYPE::LINE,    .legend = "Half-filling, asymptotic (Lieb & Wu)", .show = false, .enabled = false, .marker_style = ImPlotMarker_Square, .x = &plot_x_vals, .y = {}, .comp_status = {}});
    compute_result = &plot_elements[0].comp_status; // plot_elements should not be resized after this without updating compute_result pointer!
-
 }
 
 ProgramState::~ProgramState()
@@ -354,7 +352,7 @@ void ProgramState::handle_events()
          int eidx = 0;
          for(PlotElement& e : plot_elements)
          {
-            // TODO: Even if comp_status is pending, might want to let it through and upon reassigning e.comp_result it will block until the result is ready, which might be desired behavior
+            // TODO: Even if comp_status is pending, might want to let the element through. Reassigning e.comp_result will block until the result is ready, which might be desired behavior
             if(e.enabled && !e.comp_status.is_pending())
             {
                assert(!e.comp_status.is_valid() || e.comp_status.is_ready());
@@ -529,14 +527,14 @@ void ProgramState::render_UI()
 {
    int display_w, display_h;
    glfwGetFramebufferSize(window, &display_w, &display_h);
-   ImVec2 plot_win_pos       = {0.0f*display_w, 0.0f*display_h};
-   ImVec2 plot_win_size      = {0.8f*display_w, 0.8f*display_h};
+   const ImVec2 plot_win_pos       = {0.0f*display_w, 0.0f*display_h};
+   const ImVec2 plot_win_size      = {0.8f*display_w, 0.8f*display_h};
 
-   ImVec2 settings_win_pos   = {0.8f*display_w, 0.0f*display_h};
-   ImVec2 settings_win_size  = {0.2f*display_w - 1, 0.8f*display_h};
+   const ImVec2 settings_win_pos   = {0.8f*display_w, 0.0f*display_h};
+   const ImVec2 settings_win_size  = {0.2f*display_w - 1, 0.8f*display_h};
 
-   ImVec2 profiling_win_pos  = {0.0f*display_w, 0.8f*display_h};
-   ImVec2 profiling_win_size = {1.0f*display_w - 1, 0.2f*display_h};
+   const ImVec2 profiling_win_pos  = {0.0f*display_w, 0.8f*display_h};
+   const ImVec2 profiling_win_size = {1.0f*display_w - 1, 0.2f*display_h};
 
    ImGui_ImplOpenGL3_NewFrame();
    ImGui_ImplGlfw_NewFrame();
@@ -551,7 +549,6 @@ void ProgramState::render_UI()
    if(plot_mode && ImPlot::BeginPlot("##plot1", ImVec2(-1, -1)))
    {
       ImPlot::SetupAxes(plot_T_range ? "T" : "U", "E0/Ns");
-      //ImPlot::SetupAxes("U/T", "E0/Ns");
 
       for(const PlotElement& e : plot_elements)
       {
@@ -600,10 +597,10 @@ void ProgramState::render_UI()
    if(ImGui::CollapsingHeader("Parameters"))
    {
       param_input = ImGui::InputFloat("T", &in_T) |
-         ImGui::InputFloat("U", &in_U) |
-         ImGui::SliderInt("Ns", &in_Ns, 1, MAX_SITE_COUNT) |
-         ImGui::SliderInt("N_up", &in_N_up, N_dn_min, N_dn_max) |
-         ImGui::SliderInt("N_dn", &in_N_dn, N_up_min, N_up_max);
+                    ImGui::InputFloat("U", &in_U) |
+                    ImGui::SliderInt("Ns", &in_Ns, 1, MAX_SITE_COUNT) |
+                    ImGui::SliderInt("N_up", &in_N_up, N_dn_min, N_dn_max) |
+                    ImGui::SliderInt("N_dn", &in_N_dn, N_up_min, N_up_max);
 
       ImGui::PushStyleVar(ImGuiStyleVar_Alpha, plot_T_range ? 1.0 : 0.5);
       int& in_plot_point_count = T_range.dim;
