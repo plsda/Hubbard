@@ -10,7 +10,7 @@ where $\epsilon, U, N_s$ are the non-interacting per-particle energy, interactio
 also been presented in the literature [1].
 
 The solver operates in the momentum-spin basis, and 
-utilizes the translation ($\mathbb{Z}_{N_s}$) and spin-rotation ($SU(2)$) symmetries of the periodic Hubbard model to reduce the problem of solving the energy eigenstate(s) into a series of small and dense diagonalization
+utilizes the translation ($\mathbb{Z}_{N_s}$) and spin-rotation (SU(2)) symmetries of the periodic Hubbard model to reduce the problem of solving the energy eigenstate(s) into a series of small and dense diagonalization
 problems, whereas computation in the site-basis yields a much larger, but sparse, diagonalization problem. The computational basis for each subspace spanned by states of a given total momentum and total spin, consisting of spin
 configuration functions (CSFs), is formed using the so-called genealogical coupling method, which affords one to systematically and efficiently from CSFs as linear combinations of determinantal basis states.
 
